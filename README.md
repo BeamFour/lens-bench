@@ -181,6 +181,9 @@ node tools/import.js --no-check      # 跳过几何自检
 
 四步也可以单独跑：`zmx2lens.js` → `setvig.js` → `build.js` → `geocheck.js`。
 
+发布到 GitHub（`anvcor/lens-bench`，GitHub Pages）：`python tools/publish.py -m "说明"`，
+流程、登录和备用办法见 `docs/推送方法.md`（站点仓库里是 `PUBLISH.md`）。
+
 转换会给每个文件写一个 `lenses/<id>.json`，并重写 `lenses/index.json`（网页下拉读它）。
 渐晕这一步把重算好的表写进各 JSON 的 `vigAuto`，文件自带的那份留在 `cfgs[i].vig` 里不动；
 `node tools/setvig.js --clear` 可以全部撤掉，`node tools/setvig.js <id>` 只跑指定的几颗。
