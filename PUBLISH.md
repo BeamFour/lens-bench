@@ -49,7 +49,10 @@ python tools/publish.py -m "新增 X 颗：……"
 
 - 这份 git 配了 **Git Credential Manager**（`credential.helper = manager`）。
 - **第一次推送时会弹出 GitHub 登录窗口**，由用户本人登录 anvcor 账号。登录之后凭据存在 Windows 凭据管理器里，以后推送就不再问了。
-- agent 不要替用户输入密码或 token，也不要设置 `GIT_TERMINAL_PROMPT=0`。设了这个变量，GCM 就弹不出登录窗口，推送会直接失败，报「could not read Username」。
+- agent 不要替用户输入密码或 token。
+- **agent 的 shell 默认带着 `GIT_TERMINAL_PROMPT=0` 和 `GCM_INTERACTIVE=never`**。这两个变量在，GCM 就弹不出登录窗口，推送会直接失败，报「Cannot prompt because user interactivity has been disabled」「could not read Username」。
+  - `publish.py` 推送前已经把它们改掉了。
+  - 手动跑 `git push` 时，先 `Remove-Item env:GIT_TERMINAL_PROMPT; $env:GCM_INTERACTIVE='auto'`。
 - **如果推送失败**，把报错原文告诉用户，请用户在自己的终端里跑一次 `git push`（在 `E:\Download\lens-bench-site` 目录下）完成登录。
 
 ## 备用办法：Chrome 网页上传（git 用不了时）
