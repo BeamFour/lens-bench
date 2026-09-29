@@ -1500,17 +1500,15 @@ var OPT = (function () {
        球面朝镜头方向弯回来，视场越大起点越靠近镜头，入射段自然短下去，
        正是 Zemax 里在镜头最前面加一个带曲率半径的虚面的效果。
        取顶点在 z = −lead、在首面口径 h1 处矢高约为 lead/2 的球：R = (h1² + s²) / (2s)，s = lead/2。
-       实测这条规则给 12-24 GM 解出 R ≈ 104，和手工在 Zemax 里加的 R = 100 基本一致。 */
+       实测这条规则给 12-24 GM 解出 R ≈ 104，和手工在 Zemax 里加的 R = 100 基本一致。
+       这只是起步值，光线全部追完后还要按交点位置校一次，见 sphereOk。 */
     var lead = Math.max(sys.totalTrack * 0.10, 2);
     var zEnter = Math.min(0, sys.zEP) - lead;
-    var h1 = S[0].sd || (opt.sdDraw && opt.sdDraw[0]) || Math.max(sys.epd / 2, lead);
-    var sEnt = lead * 0.5;
-    var rEnt = (h1 * h1 + sEnt * sEnt) / (2 * sEnt);      // 前置球面半径（凸面朝物方）
-    var zcEnt = zEnter + rEnt;                            // 球心
+    var sEnt = lead * 0.5, rEnt = 0, zcEnt = 0, entRays = [];
 
     /* 把入射段的起点挪到前置球面上。求线段 P0→P1 与球的交点，取先遇到的那个；
-       解不出来（球太小、光线打不到）就退回原来的平面裁剪。 */
-    function entryPoint(P0, P1) {
+       解不出来（球太小、光线打不到）就退回原来的平面裁剪。strict：只认球前半边的交点，打不到返回 null。 */
+    function entryPoint(P0, P1, strict) {
       var dx = P1[0] - P0[0], dy = P1[1] - P0[1], dz = P1[2] - P0[2];
       var wx = P0[0], wy = P0[1], wz = P0[2] - zcEnt;
       var A = dx * dx + dy * dy + dz * dz;
@@ -1522,6 +1520,7 @@ var OPT = (function () {
         var sq = Math.sqrt(disc), ta = (-B - sq) / (2 * A), tb = (-B + sq) / (2 * A);
         if (ta >= 0 && ta <= 1) t = ta; else if (tb >= 0 && tb <= 1) t = tb;
       }
+      if (strict) return t !== null && t === ta && P0[2] + t * dz < zcEnt ? [P0[0] + t * dx, P0[1] + t * dy, P0[2] + t * dz] : null;
       if (t === null) {                                   // 退回平面
         if (P0[2] >= zEnter || Math.abs(dz) < 1e-9) return P0;
         t = (zEnter - P0[2]) / dz;
@@ -1554,8 +1553,9 @@ var OPT = (function () {
             var r = launch(sys, th, q2.ex, q2.ey, lam, true);
             if (!r.pts || r.pts.length < 2) continue;
             var pts = r.pts.slice();
-            if (pts.length > 1) pts[0] = entryPoint(pts[0], pts[1]);
-            polys.push(pts.map(function (p) { return [p[2], p[1]]; }));
+            var poly = pts.map(function (p) { return [p[2], p[1]]; });
+            if (pts.length > 1) entRays.push({ P0: pts[0], P1: pts[1], poly: poly });   // 起点等球面定下来再挪
+            polys.push(poly);
             for (var k2 = 1; k2 < pts.length && k2 - 1 < S.length; k2++)
               maxR[k2 - 1] = Math.max(maxR[k2 - 1], Math.abs(pts[k2][1]));
           }
@@ -1563,6 +1563,32 @@ var OPT = (function () {
         bundles.push({ field: th, fi: f, wi: wls[w].i, nm: wls[w].nm, rays: polys, span: span });
       }
     }
+
+    /* 起步仍是原来的球：首面口径 h1 处矢高 s。12-24 GM 这类原来就画得对的，结果不变（R ≈ 104）。
+       但要求每条光线和球的交点都落在球的前段、|y| ≤ 0.7R（矢高 ≤ 0.29R，曲率平缓的那一段）。
+       长焦首面口径小、R 跟着小，斜视场下缘的光线又比 h1 低，交点落到球的「腰」上甚至打不到球，
+       起点被拉到贴着首面、同一束里乱跳 —— 这时把 R 加大到刚好满足为止。 */
+    var h1 = S[0].sd || (opt.sdDraw && opt.sdDraw[0]) || Math.max(sys.epd / 2, lead);
+    function sphereOk(R) {
+      rEnt = R; zcEnt = zEnter + R;
+      for (var q = 0; q < entRays.length; q++) {
+        var e = entRays[q], p = entryPoint(e.P0, e.P1, true);
+        if (!p || Math.hypot(p[0], p[1]) > 0.7 * R) return false;
+      }
+      return true;
+    }
+    var R0 = (h1 * h1 + sEnt * sEnt) / (2 * sEnt), Rok = R0;
+    if (!sphereOk(R0)) {
+      var Rlo = R0, Rhi = R0;
+      for (var g = 0; g < 80 && !sphereOk(Rhi); g++) { Rlo = Rhi; Rhi *= 1.25; }
+      for (var it = 0; it < 30; it++) { var Rm = (Rlo + Rhi) / 2; if (sphereOk(Rm)) Rhi = Rm; else Rlo = Rm; }
+      Rok = Rhi;
+    }
+    rEnt = Rok; zcEnt = zEnter + Rok;                    // 前置球面半径（凸面朝物方）、球心
+    entRays.forEach(function (e) {
+      var p = entryPoint(e.P0, e.P1);
+      e.poly[0] = [p[2], p[1]];
+    });
 
     /* 每面的画图半径。优先级：
          面上写死的通光 (CODE V CIR) → 文件里的画图半口径 (Zemax DIAM/FLAP) → 光线包络反推。

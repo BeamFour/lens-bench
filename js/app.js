@@ -240,6 +240,12 @@
   var SD_HARD = '硬光阑：追迹时光线超出即被挡。清空则退回参考值';
   function sdHint(i) {
     var a = state.sdAp && state.sdAp[i], d = state.sdDraw && state.sdDraw[i];
+    // 光阑面：和 Layout 的光阑刻线同一个数 —— 当前结构按 F/# 解出的光阑半径与光线包络取大。
+    // 文件里的光阑 DIAM 只是某一个结构的值（恒定 F/# 的变焦，其它焦段光圈是收小的），不拿来显示
+    if (i === state.stop && last && last.sys && last.sys.sdStop > 0 && last.opt.stopIdx === i
+        && last.surfaces && last.surfaces.length === state.rows.length)
+      return { v: Math.max(last.sys.sdStop, (last.lay && last.lay.maxR && last.lay.maxR[i]) || 0),
+               why: '光阑面：当前结构在这个 F/# 下实际卡光的半径（轴上边缘光线追出来的，随焦段变），和 Layout 光阑刻线一致。填数则作为硬光阑' };
     if (a) return { v: a, why: '文件里写死的通光（Zemax 固定 DIAM / FLAP）：「一键渐晕」和 Spot 逐面裁剪按它算，MTF 追迹不裁光线。填数则作为硬光阑' };
     if (d) return { v: d, why: '文件里的半口径（Zemax 自动算的 DIAM），只用于画图，不挡光。填数则作为硬光阑' };
     var L = last && last.lay && last.lay.drawSd;
@@ -781,7 +787,11 @@
       // 原来用 sys.sdStop —— 那是孔径定义解出来的「近轴光瞳半径」，
       // 实际边缘光线因为光瞳球差会落得更高（85 GM II 的 1.6m 结构：光线到 17.09，sdStop 只有 16.59），
       // 于是光线从刻线中间穿过去，看着像和光阑打架。
-      var hs = (L.drawSd && L.drawSd[si]) || s.surfaces[si].sd || L.sdStop || Math.max(L.maxR[si] * 1.06, s.epd / 2);
+      // 但表里没填硬光阑时，文件里那个光阑 DIAM 只是某一个结构的值（索尼 20-70 G 的 9.504 是长焦端的），
+      // 恒定 F/# 的变焦在其它焦段光圈是收小的：真正卡光的半径是当前 F/# 解出来的 sdStop（实际光线追出来的），
+      // 再和本结构光线在光阑面的包络取大，刻线才会贴着光束。
+      var hs = s.surfaces[si].sd || (L.sdStop > 0 && Math.max(L.sdStop, L.maxR[si] || 0))
+        || (L.drawSd && L.drawSd[si]) || Math.max(L.maxR[si] * 1.06, s.epd / 2);
       g.push('<line x1="' + X(zs) + '" y1="' + Y(hs) + '" x2="' + X(zs) + '" y2="' + Y(hs * 1.4 + 0.5) + '" stroke="' + inkC + '"' + sw(2) + '/>');
       g.push('<line x1="' + X(zs) + '" y1="' + Y(-hs) + '" x2="' + X(zs) + '" y2="' + Y(-hs * 1.4 - 0.5) + '" stroke="' + inkC + '"' + sw(2) + '/>');
       g.push(label(X(zs), Y(hs * 1.4 + 0.5), 0, -5, 'middle', '光阑'));
