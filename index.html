@@ -160,6 +160,30 @@ table.lde td.zoo{box-shadow:inset 2px 0 0 var(--accent)}
   font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-2)}
 .cmpstat b{color:var(--ink-3);font-weight:500;margin-right:5px}
 .cmpstat i{font-style:normal;color:var(--ink)}
+/* 关于页 */
+.about .ab-hero{padding:28px 0 26px}
+.ab-total{display:flex;align-items:baseline;gap:10px}
+.ab-num{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  font-size:72px;line-height:1;font-weight:600;color:var(--accent);letter-spacing:-.02em}
+.ab-unit{font-size:16px;color:var(--ink-2)}
+.ab-split{display:flex;flex-wrap:wrap;gap:6px 22px;margin:14px 0 22px;font-size:13px;color:var(--ink-2)}
+.ab-split b{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--ink);margin-left:2px}
+.ab-dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:0}
+.ab-dot.pat,.ab-bar i.pat{background:var(--accent)}
+.ab-dot.rev,.ab-bar i.rev{background:var(--warn)}
+.ab-brands{display:grid;gap:7px}
+.ab-row{display:grid;grid-template-columns:128px 1fr 36px;align-items:center;column-gap:12px;font-size:12.5px}
+.ab-bn{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ab-bar{display:flex;height:10px;gap:1px;min-width:4px;justify-self:start}
+.ab-bar i{display:block;height:100%;background:var(--ink-3);border-radius:1px}
+.ab-bc{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;font-weight:500;color:var(--ink);text-align:right}
+.ab-linklist{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.ab-linklist li{font-size:13px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
+.ab-linklist a{color:var(--accent);text-decoration:none;font-weight:600}
+.ab-linklist a:hover{text-decoration:underline}
+.ab-linklist li span{color:var(--ink-3);font-size:12px}
+.ab-linklist .ab-empty{color:var(--ink-3)}
+@media(max-width:560px){.ab-num{font-size:56px}.ab-row{grid-template-columns:96px 1fr 30px}}
 @media(max-width:560px){.sheetbody{padding:12px 12px 48px}.sheetbar{padding:9px 12px;gap:8px}.sheetbar h2{font-size:13px}.sheetnote{display:none}}
 .hdrsel{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--ink-3);margin-right:8px;white-space:nowrap}
 .hdrsel select{height:22px;padding:1px 4px;font-size:11px;font-family:"IBM Plex Mono",ui-monospace,monospace}
@@ -636,53 +660,25 @@ table.data tbody tr:hover{background:var(--panel-2)}
   <div class="sheet" id="aboutSheet" hidden>
     <div class="sheetbar">
       <button class="iconbtn" id="aboutBack" type="button">← 返回</button>
-      <h2>关于 · 算法与验证</h2><span class="grow"></span>
+      <h2>关于</h2><span class="grow"></span>
       <span class="sheetnote">全部计算在本机浏览器完成，没有后端</span>
     </div>
-    <div class="sheetbody">
-<section><h3>算的是什么</h3><p>序列面实光线追迹（球面 / 二次曲面 / 偶次非球面）；玻璃取自<b>内置的 19 家厂商目录（3074 种牌号）</b>，按各自目录公式求折射率（Laurent 幂级数 / 厂商 Sellmeier / 标准 Sellmeier / Herzberger）；查不到的牌号可写 <code>nd/vd</code> 或 6 位 MIL 代码，按 Conrady 模型玻璃处理；入瞳位置由近轴矩阵求解；</p></section>
+    <div class="sheetbody about">
+<section class="ab-hero">
+  <div class="ab-total"><span class="ab-num" id="abTotal">—</span><span class="ab-unit">颗镜头</span></div>
+  <div class="ab-split">
+    <span><i class="ab-dot pat"></i>专利 <b id="abPat">—</b></span>
+    <span><i class="ab-dot rev"></i>逆向 <b id="abRev">—</b></span>
+    <span>品牌 <b id="abBrands">—</b></span>
+  </div>
+  <div class="ab-brands" id="abBrandList"></div>
+</section>
 
-<section><h3>Layout · 光阑 · 光线瞄准</h3><p><b>每视场 3 条光线</b>：上下两条取该视场未渐晕瞳区间的边缘，中间那条<b>牛顿迭代瞄到光阑面 (0,0)</b>，即真正的主光线——在入瞳里取 u=0 只有瞳像差为零时才等价，A2028 这种广角反远距在 35° 上会偏到光阑面下方 0.38 mm。<b>光阑符号</b>画在真实光阑半径处：面上写了 CIR 用 CIR，没写就用轴上满孔径光线在光阑面的实际落点（该 F/# 下真正起限制作用的半径；近轴值 EPD/2·|pupilMag| 只作兜底）。因此「光线瞄准」现在不再要求光阑面有 CIR。开启后每条光线牛顿迭代精确瞄到光阑面（同 Zemax Ray Aiming）；渐晕由各面半孔径决定。</p></section>
-
-<section><h3>MTF</h3><p>对齐 CODE V 的 <code>MTFVSFLD</code> 宏：该宏先跑 <code>setvig</code> 求渐晕因子，再调 <code>mtf</code> 命令，取的是<b>衍射 MTF</b>。<br>
-          <b>衍射模式</b>（默认）：按渐晕因子把通光瞳建模成缩放+偏心的等效椭圆瞳，瞳内均匀取样、由实光线光程算波前 OPD，OTF = 圆孔径解析面积因子 × 波前相位平均 ⟨e<sup>iΔφ</sup>⟩，多波长按通量加权合成复数 OTF。<b>截止频率按「像空间方向余弦」上的瞳半宽定</b>，不是拿 F/# ÷ 归一化瞳半宽：归一化瞳坐标到方向余弦的映射在离轴上被大幅压缩，视场越大压得越狠——实测最大视场的压缩比与归一化半宽之比，135mm 是 ×0.95、85mm ×0.86、35mm ×0.53、16mm ×0.46。照归一化半宽定截止频率，等于把瞳当成没被压缩过，剪切量偏小、边缘视场 MTF 系统性虚高（FE 16mm F1.8 G 角落 80 cyc/mm 会报 0.58，独立的严格二维积分是 0.32，Zemax 也是 0.32）。现在逐波长在瞳缘追 16 条探针光线量出真实的方向余弦瞳半宽，ν<sub>c</sub> = 2 × 半宽，轴上退化成原来的 F/#（读数变化 ≤ 0.001）。剪切取样在瞳缘用「按可用角点归一化的双线性」（不再退回最近邻——最近邻会把最多半格的坐标误差当成波前差，在 PV 大的视场上折算成几个弧度的相位噪声，与 32² 网格收敛值的最大偏差因此从 0.030 降到 0.011）。<br>
-          <b>内核算得快了一倍</b>（2026-09-06）：非球面高次项改按 r² 的幂递推、矢高与斜率一次算完、
-          折射率按 (面, 波长) 记忆化，追迹与光线瞄准各快约 1.9 倍，切镜头的等待时间少了一半以上。
-          <b>一键渐晕</b>不再在「挡没挡住」上定步长二分 24 次，改成在<b>口径余量</b>
-          （max(落点半径 / 通光) − 1，连续函数，零点就是瞳缘）上用带保护的假位法求根，
-          8~10 次就收到 1e-9，比二分跑满还准。代价是 <code>Math.pow</code> 换成乘法后不再逐位相同：
-          实测一阶量变化 5.7e-16、全库 MTF 读数最大变化 5.2e-7、渐晕系数最大变化 7.1e-8，
-          都在数值噪声量级。<br>
-          <b>波前比瞳多采一圈</b>：OTF 是把瞳沿剪切量 ±s 平移后自相关，只采到瞳边为止的话，靠边那一圈的平移点落在采样区外，只能拿残缺的 2×2 模板插值，而那里正是波前斜率最大的地方——结果系统性偏高，且加密网格也不收敛到正确值（FE 85mm F1.4 GM II 轴上 30 cyc/mm：24² 给 0.871、96² 给 0.811，而严格二维积分是 0.797）。现在多采「最大剪切量 + 2 格」一圈（外圈绕开通光追，瞳形状已由等效椭圆完整描述），平移点总落在采到的区域里，24² 就给 0.796，各档网格之间只差 0.01 以内。<br>
-          <b>几何模式</b>：对像面光斑直接做傅里叶变换取模，不含衍射，轴上会系统性偏高。</p></section>
-
-<section><h3>球差 · 场曲 · 畸变</h3><p>三条都用实光线算，不走赛得系数。<b>纵向球差</b>：轴上光线在归一化瞳高 ρ 处与光轴的交点减去像面 z——曲线底端不归零，那段偏移就是轴向色差。<b>像散场曲</b>：以主光线为中心在光阑面取 ±2% 瞳半径的一对光线（科丁顿构型的实光线版），子午取两条的交点、弧矢取 x=0 的位置，都换算成到像面的轴向距离；实线 = 子午 T、虚线 = 弧矢 S，与上面 MTF 图同一约定（注意 Zemax 的场曲图默认是反过来的：实线 S、虚线 T）。<b>畸变</b>：主光线实像高与<b>近轴主光线在像面上的高度</b>之比，不是 f·tanθ——像面不在近轴焦点上时两者会差几个千分之一，老式三片结构能差到 0.47%。参考光线不受通光孔径限制，否则大视场上整条会消失。</p></section>
-
-<section><h3>光线扇形（Ray Fan）</h3><p>页面最下面那张，布局照 CODE V 的 <code>RIM</code>：每个等分像高视场一行，左格子午（Δy 随子午瞳坐标）、右格弧矢（Δx 随弧矢瞳坐标），最上面是最大视场，默认 6 个视场点。横轴一律取<b>整个入瞳</b>的归一化坐标 −1…+1，曲线只画在该视场未渐晕的那一段——边缘视场短一截就是渐晕，和 CODE V 的图一个道理。纵向零点取该视场<b>主光线</b>在主波长下的落点，各波长上下错开即倍率色差。所有格子共用一个对称刻度：官方宏 <code>cvquickrim.seq</code> 的做法就是先扫一遍全部视场 × 波长的最大像差、再用 <code>SSI</code> 给每个变焦位统一设定，这里照搬。轴上那一行的子午扇实测严格奇对称（21 个采样点无一例外），是这条链路的一个硬校验。</p></section>
-
-<section><h3>多重结构 · 有限物距 · 渐晕</h3><p>.seq 的 <code>ZOO</code> 记录和 .zmx 的 <code>MNUM / THIC / APER / FVCY</code> 都会读进来——结构数、各结构标题、逐结构的 F/# 与面厚度 / 曲率 / 渐晕系数，用工具栏「结构」下拉切换，随结构变化的格子在表里标了色，改这些格子会写回当前结构。物面厚度落到顶栏「物距」，近摄结构按<b>有限共轭</b>追迹：光线从物点发出而非平行入射，F/# 用像方工作 F/#（由近轴边缘光线角 1/(2|u′|) 反解入瞳），状态栏 RED 给放大倍率。70 mm 微距的 1.0X 结构实测放大率 −0.9975，SIGMA 35 的 MFD 结构 −0.2004。<br><b>渐晕</b>：文件里若存了 CODE V 的 <code>SETVIG</code> 系数或 Zemax 的 <code>VDY/VCY</code>，瞳区间直接按它逐视场插值取，不再靠通光孔径反推——很多文件只在像面写 CIR，镜片没有孔径数据，这时这张表是唯一依据。两家的约定不同，统一换算成 CODE V 那套：<code>VUY = VCY − VDY</code>、<code>VLY = VCY + VDY</code>。<br><b>这套系数写在哪套坐标上，取决于文件里的光线瞄准开关</b>（.zmx 的 <code>RAIM</code>）：关瞄准时归一化瞳坐标落在<b>近轴入瞳</b>上，开了才落在<b>光阑面</b>上，而本页一律按光阑坐标算。大视场上两者差很远——FE 16mm F1.8 G 最大视场文件写的 [−0.577, 0.913] 换到光阑上其实是 [−0.510, 0.236]，上缘差 0.68，直接混用会把边角 MTF 整个算错。导入时按文件的 RAIM 判断，关瞄准的文件由 <code>tools/setvig.js</code> 逐视场实光线追迹换算，并在提示里写明换算前后的瞳区间。</p></section>
-
-<section><h3>镜头文件导入</h3><p><b>CODE V .seq</b> 读面数据 / CIR 通光 / ASP 非球面 / STO / FNO / WL·WTW·REF / YRI·YAN / SETVIG / ZOO。<b>Zemax .zmx</b>（UTF-16 或 UTF-8 自动识别）读 SURF·CURV·DISZ·GLAS·CONI·PARM / <code>XDAT</code>（扩展非球面 <code>XASPHERE</code> 能到 r¹⁸ / r²⁰，扩展奇次非球面 <code>XOSPHERE</code> 带 r 的奇数次项，系数都按归一化半径换算回 r 的实际幂次；<code>BINARY_2</code> 衍射面读 <code>PARM 0</code> 级次和 <code>XDAT</code> 相位系数，存成 <b>DOE M R a1 a2 …</b>，追迹按光栅方程、衍射效率按 100%） / STOP / FNUM·ENPD / FTYP·YFLN / WAVM·PWAV / VDYN·VCYN / <code>RAIM</code>（光线瞄准开关，决定渐晕系数写在哪套瞳坐标上） / MNUM·THIC·APER·FVCY。网页拖入和命令行批量转换走的是同一份解析代码。<br><b>有意不导入的</b>：Zemax 的 <code>FLAP</code> 浮动通光（逐结构重算，文件里只存了当前结构那一份，套到近摄结构会把边缘光线全挡掉；有渐晕系数时瞳已被完整定义）、多重结构里换玻璃（<code>GLSS</code>）、偶次非球面的 r² 项（<code>PARM 1</code>）、X 视场、非毫米单位——这些都只给提示，不闷声跳过。</p></section>
-
-<section><h3>曲线画法</h3><p>MTF-视场图按算出来的视场点用<b>单调三次 Hermite（PCHIP）</b>连线：过每一个点、不在点之间拱出多余波峰，只改画法不改数值。默认视场点 15 个（可选 6…31）；实测 11 / 15 / 31 点画出的曲线几乎重合，说明剩下的起伏是模型的真实结构而不是取样不足。</p></section>
-
-<section><h3>波长与谱色</h3><p>绘图颜色不是挑的，是<b>按波长算出来的真实谱色</b>：CIE 1931 配色函数用 Wyman/Sloan/Shirley (2013) 的多高斯拟合，转 sRGB。
-两处工程化处理：出色域<b>直接截负</b>而不是去饱和——谱色截出来才是常见的彩虹，去饱和会把 656 nm 的深红推成粉；
-色相和饱和度保持不动，只把<b>亮度归一到统一目标</b>，否则黄绿在浅色底上、蓝紫在深色底上都会看不清。
-拟合的尾巴在 680 nm 以上会失真（x̄ 与 ȳ 交叉，750 nm 会算成绿色），所以色相取值夹在 385~680 nm，可见区外再往灰里调一点。
-一个已知局限：520~560 nm 在 sRGB 里全部落在色域外的同一侧，截负后都是同一个绿，532 和 546 分不开——这是 sRGB 色域的限制，不是算错。
-网页、镜头库 JSON、命令行转换用的是同一个函数，颜色必然一致。</p></section>
-
-<section><h3>玻璃库</h3><p>SCHOTT 504 / OHARA 499 / HOYA 438 / HIKARI 318 / CDGM 323 / SUMITA 320 / NHG 215 / CHINA 135 / CORNFR 100 / CHANCE 73 / PILKINGTON 31 / SPECIAL 46（熔石英、CaF<sub>2</sub>、蓝宝石、Ge、ZnSe、PMMA…）等共 19 家。「玻璃」列有牌号自动补全；重名（如 BAF3）按 SCHOTT→OHARA→HOYA→HIKARI→CDGM→SUMITA… 的优先级取，也可写 <code>H-ZF72A_CDGM</code> 这种<b>牌号_目录</b>形式指定。CODE V / Zemax 的 <code>NBFD25_HOYA</code>、<code>SBSL7</code> 这类带后缀或去连字符的写法都能识别。<br>
-          <b>精度核对。</b>与厂商 Excel 的 n<sub>d</sub> 逐一对比：OHARA 126 种最大偏差 5.1e-6、HOYA 159 种 4.9e-6、HIKARI 151 种 4.1e-8；另用 MIL 代码反查全库，SCHOTT 99.4% / OHARA 99.2% / CDGM 99.7% 命中（不命中的多是 n<sub>d</sub>&gt;2 或 v<sub>d</sub>&gt;100 无法编码成 6 位）。<b>注意 CDGM 用的是 2024-06 版目录</b>，与 2026-03 版相比有 35 种牌号 n<sub>d</sub> 偏差达 1.9e-3。</p></section>
-
-<section><h3>已验证 · 对 CODE V 实测</h3><p>16 颗镜头 × 结构逐一反解「实像高 → 视场角」，主光线落点与目标一致到 1e-5 mm；厚透镜焦距与解析式一致到 1e-6；小孔径实光线落点与近轴焦点相差 6e-5 mm；瞄准落点与目标一致到 1e-5 mm；波前为零时衍射 MTF 精确复现圆孔径解析式（1e-16）；单片球差波前呈 ρ<sup>4</sup> 且随孔径 ∝1/F#<sup>4</sup>；追迹出的瞳区间与 CODE V <code>SETVIG</code> 存的 VUY/VLY 相差 0.002~0.04。<br>
-          <b>对 CODE V 实测</b>（索尼 55ZA，3 像高 × 3 频率 × T/S）：衍射模式<b>轴上偏差 +0.002~+0.005</b>；离轴仍偏高 0.03~0.08，原因是瞳取样在光阑面而非出瞳，未补偿离轴瞳像差。几何模式全场 RMS 偏差 0.015，但轴上系统性偏高。</p></section>
-
-<section><h3>修过的坑</h3><p>① 交点求解原来直接从光线起点解二次方程、按 |t| 最小取根；起点远在面后方时（有限物距、或首面曲率半径很大）最小根会落到球面另一侧——70 mm 微距的 1.2M 结构就这样把第 1 面落点解成 −9.7 而不是 +11.4。现在一律先平移到该面切平面再解。② 「实像高 → 视场角」原来用牛顿迭代，大角度上主光线追不通时会直接退回初值；现在改成先夹住再二分，且遇到追不通会把步子收回来。另外物距超过 10 km 一律按无限远：文件里的「无限远」常写成 1e10~1e15，真按有限共轭算，光程累加到那个量级时双精度误差已是微米量级，波前直接失去意义。</p></section>
-
-<section><h3>还没有</h3><p>衍射 MTF（需波前 OPD → FFT）、点列图、优化与公差、变焦位置、反射面与偏心倾斜。与 Zemax / CODE V 对照时请用它们的 <b>几何 MTF</b>，视场取相同角度点。</p></section>
-
+<section class="ab-links"><h3>友情链接</h3>
+  <ul class="ab-linklist">
+    <!-- <li><a href="https://…" target="_blank" rel="noopener">名称</a><span>一句话介绍</span></li> -->
+  </ul>
+</section>
     </div>
   </div>
 

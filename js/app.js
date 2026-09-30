@@ -3126,9 +3126,39 @@
     else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); histRedo(); }
   });
 
-  /* ---- 关于：二级页 ---- */
+  /* ---- 关于：二级页 ----
+     镜头数按目录实时统计，内置对照（kind = builtin）不算镜头。 */
+  function aboutStats() {
+    var by = {}, order = [], pat = 0, rev = 0, tot = 0;
+    LENSDB.index.forEach(function (e) {
+      if (e.kind === 'builtin') return;
+      var b = brandOf(e);
+      if (!by[b]) { by[b] = { n: 0, pat: 0, rev: 0 }; order.push(b); }
+      by[b].n++; tot++;
+      if (e.origin === '专利') { by[b].pat++; pat++; }
+      else if (e.origin === '逆向') { by[b].rev++; rev++; }
+    });
+    $('abTotal').textContent = tot;
+    $('abPat').textContent = pat;
+    $('abRev').textContent = rev;
+    $('abBrands').textContent = order.filter(function (b) { return b !== OTHERB; }).length;
+    var max = 1;
+    order.forEach(function (b) { if (by[b].n > max) max = by[b].n; });
+    $('abBrandList').innerHTML = order.map(function (b) {
+      var c = by[b], oth = c.n - c.pat - c.rev;
+      return '<div class="ab-row"><span class="ab-bn">' + esc(b) + '</span>' +
+        '<span class="ab-bar" style="width:' + (100 * c.n / max).toFixed(1) + '%">' +
+        (c.pat ? '<i class="pat" style="flex:' + c.pat + '"></i>' : '') +
+        (c.rev ? '<i class="rev" style="flex:' + c.rev + '"></i>' : '') +
+        (oth ? '<i style="flex:' + oth + '"></i>' : '') +
+        '</span><b class="ab-bc">' + c.n + '</b></div>';
+    }).join('');
+    var ul = document.querySelector('#aboutSheet .ab-linklist');
+    if (ul && !ul.querySelector('li')) ul.innerHTML = '<li class="ab-empty">暂无</li>';
+  }
   function aboutOpen(on) {
     var sh = $('aboutSheet');
+    if (on) aboutStats();
     sh.hidden = !on;
     document.body.style.overflow = on ? 'hidden' : '';
     if (on) sh.scrollTop = 0;
