@@ -636,7 +636,17 @@ var OPT = (function () {
     }
     var A = M[0], B = M[1];
     var zEP = Math.abs(A) > 1e-12 ? B / A : 0;              // 相对面 0 顶点
-    return { efl: efl, bfl: bfl, zEP: zEP, pupilMag: A };
+
+    // 出瞳：从光阑中心出发的近轴主光线在像方的交轴点（相对面 0 顶点；像方远心时为 null）
+    var yc = 0, uc = 1, nc = stopIdx > 0 ? surfaces[stopIdx - 1].n(lambda) : 1, zLast = 0;
+    for (var k = 0; k < N - 1; k++) zLast += surfaces[k].T;
+    for (var m = stopIdx; m < N; m++) {
+      var sm = surfaces[m], cm = sm.R ? 1 / sm.R : 0, nm2 = sm.n(lambda);
+      uc = (nc * uc - yc * (cm * (nm2 - nc) + doePower(sm, lambda))) / nm2; nc = nm2;
+      if (m < N - 1) yc += uc * sm.T;
+    }
+    var zXP = Math.abs(uc) > 1e-12 ? zLast - yc / uc : null;
+    return { efl: efl, bfl: bfl, zEP: zEP, pupilMag: A, zXP: zXP };
   }
 
   /* ---------- 从轴上物点出发、初始斜率 u=1 的近轴光线 ----------
@@ -697,7 +707,7 @@ var OPT = (function () {
     var sysObj = {
       surfaces: surfaces, zVertex: zv, zImg: zImg, totalTrack: z, stopIdx: opt.stopIdx,
       aiming: false,
-      efl: fo.efl, bfl: fo.bfl, zEP: fo.zEP, epd: epd, fno: fnoEff, pupilMag: fo.pupilMag,
+      efl: fo.efl, bfl: fo.bfl, zEP: fo.zEP, zXP: fo.zXP, epd: epd, fno: fnoEff, pupilMag: fo.pupilMag,
       zObj: zObj, mag: mag, objDist: finite ? objD : Infinity,
       vig: opt.vig || null,
       zStart: Math.min(0, fo.zEP) - Math.max(20, Math.abs(fo.efl) * 0.5),
@@ -1029,13 +1039,21 @@ var OPT = (function () {
           row.S.push(Math.sqrt(reS * reS + imS * imS) / sumW);
         }
       } else {
-        // 以多色质心为球心的参考球算 OPD（活塞项不影响 OTF，逐波长各自扣除）
+        /* 以多色质心为球心的参考球算 OPD（活塞项不影响 OTF，逐波长各自扣除）。
+           参考球半径取「出瞳 → 像面」距离：先把每条光线沿自身方向（像方空气里）推到出瞳平面，
+           再加上它到球心的距离。原来直接从最后一面的落点量到球心，误差是 ε²/(2d)（ε = 横向像差，
+           d = 最后一面到像面）——d 一小就失真，d → 0 时退化成 opl + ε，几 µm 的横向像差变成几个波。
+           尼康 Z 100-400 的 CODE V 凸轮导出件保护玻璃后表面到像面是 2e-14，轴上 MTF 因此塌到 0.08。 */
+        var Rref = (sys.zXP !== null && isFinite(sys.zXP)) ? sys.zImg - sys.zXP : 1e5;
+        if (Math.abs(Rref) > 1e5) Rref = Rref < 0 ? -1e5 : 1e5;   // 像方近远心：参考球退化成近平面
+        if (Math.abs(Rref) < 1) Rref = Rref < 0 ? -1 : 1;
+        var zRef = sys.zImg - Rref, sgnR = Rref < 0 ? -1 : 1;
         for (var li2 = 0; li2 < wl.length; li2++) {
           var St = store[li2], base = null;
           for (var t2 = 0; t2 < St.idx.length; t2++) {
-            var rr = St.R[t2];
-            var ddx = cx - rr.P[0], ddy = cyc - rr.P[1], ddz = sys.zImg - rr.P[2];
-            var opd = rr.opl + Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+            var rr = St.R[t2], tR = (zRef - rr.P[2]) / rr.D[2];
+            var ddx = cx - (rr.P[0] + tR * rr.D[0]), ddy = cyc - (rr.P[1] + tR * rr.D[1]), ddz = Rref;
+            var opd = rr.opl + tR + sgnR * Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
             if (base === null) base = opd;
             St.w[St.idx[t2]] = opd - base; St.ok[St.idx[t2]] = 1;
           }
