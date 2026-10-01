@@ -209,8 +209,10 @@ var OPT = (function () {
       /* 非球面系数两种写法：
            默认         A4 A6 A8 …          —— 偶次，第 i 项是 r^(2i+4)，绝大多数镜头都是这个
            以 ODD 开头  ODD a1 a2 a3 …      —— r 的**任意整数次幂**，第 j 项是 r^j
-         后者对应 Zemax 的「扩展奇次非球面」(XOSPHERE)，专利里印成 A3…A10 那种带奇数次的级数。
-         偶次那套装不下奇数项，所以单开一个数组；两者互斥，写了 ODD 就整行按通用幂级数算。 */
+           以 XODD 开头 XODD Rn A1 … AN    —— Zemax「扩展奇次非球面」(XOSPHERE) 的原样写法，第 j 项是 Aⱼ·(r/Rn)^j
+         专利里印成 A3…A20 那种带奇数次的级数。导入的文件一律存成 XODD（数字和文件逐位相同）；
+         ODD 是早先的写法（已经除掉 Rn 的实际系数），照旧认。
+         偶次那套装不下奇数项，所以单开一个数组；写了 ODD / XODD 就整行按通用幂级数算。 */
       /* 衍射面（Zemax 的 Binary 2，尼康 PF / 佳能 DO 元件就是它）另用 DOE 段收尾：
            … [非球面系数] DOE M R a1 a2 …
          相位 Φ(r) = M·Σ aᵢ·(r/R)^(2i)（弧度），M 是衍射级次、R 是归一化半径，和文件里的写法一致。
@@ -227,7 +229,17 @@ var OPT = (function () {
         while (db.length && db[db.length - 1] === 0) db.pop();
         if (db.length) doe = { m: dm, R: dR, b: db };
       }
-      if (idx < endTok && /^odd$/i.test(tk[idx])) {
+      if (idx < endTok && /^xodd$/i.test(tk[idx])) {
+        /* XODD Rn A1 … AN：Zemax 扩展奇次非球面的原样写法，z += Σⱼ Aⱼ·(r/Rn)^j。
+           文件里的数原样存在 LDM，到这里才除掉 Rn^j 换成 r 的实际系数，追迹走和 ODD 同一条路。 */
+        idx++;
+        var xRn = parseFloat(tk[idx]); idx++;
+        if (!isFinite(xRn) || xRn <= 0) xRn = 1;
+        aspo = [];
+        for (var xj = 1; idx < endTok; idx++, xj++) { var xv = parseFloat(tk[idx]); aspo.push(isFinite(xv) ? xv / Math.pow(xRn, xj) : 0); }
+        while (aspo.length && aspo[aspo.length - 1] === 0) aspo.pop();
+        if (!aspo.length) aspo = null;
+      } else if (idx < endTok && /^odd$/i.test(tk[idx])) {
         idx++; aspo = [];
         for (; idx < endTok; idx++) { var ov = parseFloat(tk[idx]); aspo.push(isFinite(ov) ? ov : 0); }
         while (aspo.length && aspo[aspo.length - 1] === 0) aspo.pop();
@@ -1329,20 +1341,26 @@ var OPT = (function () {
     if (!isFinite(th0) || th0 <= 0) th0 = 1;
     th0 = Math.min(th0, 80);
 
-    // 先把目标夹住再二分：h(θ) 单调，二分不会像牛顿那样飞掉。
+    // 先把目标夹住再二分：二分不会像牛顿那样飞掉。
     // 注意大角度上主光线会追不通（返回 null），往上找的时候得能缩回来，
-    // 否则一步跨进 null 区就再也出不来了（A2028 就是这样把 14.2 mm 解成初值的）
-    var lo = 0, hi = th0, hhi = hAt(hi), k, step;
+    // 否则一步跨进 null 区就再也出不来了（A2028 就是这样把 14.2 mm 解成初值的）。
+    // h(θ) 也**不一定单调**：近摄结构的主光线像高会在某个角度见顶再往回掉（富士 XF 23mm F1.4 R 的 0.02x
+    // 在 37° 见顶 17.4 mm，39° 掉到 0.8 mm）。步子越放越大，一步就能跨过整座峰落到下坡上，
+    // 那里的 h 又比目标小，于是被当成「够不到」，返回一个下坡上的大角度——满视场 MTF 和光路全错。
+    // 所以往上找时：步长封顶 2°（峰比这宽就跨不过去），h 不升反降也当越界处理：退回来、步子减半。
+    // 只靠「不升反降」不够——一步跨过峰、落在下坡上但仍比上一点高时照样会被收下
+    // （适马 17mm F4 DG DN：初值 51.8° 一步 13° 落到 64.8°，h 比 51.8° 处还高，峰在 61°）。项目记录 6.26。
+    var lo = 0, hi = th0, hhi = hAt(hi), k, step, STEP_MAX = 2;
     for (k = 0; k < 40 && hhi === null; k++) { hi *= 0.7; hhi = hAt(hi); }   // 初值就追不通：往下收
     if (hhi === null) return th0;
     if (hhi < hTarget) {
-      step = Math.max(hi * 0.25, 0.3);
-      for (k = 0; k < 80; k++) {
+      step = Math.min(Math.max(hi * 0.25, 0.3), STEP_MAX);
+      for (k = 0; k < 200; k++) {
         var nx = Math.min(hi + step, 89.5), hn = hAt(nx);
-        if (hn === null) { step *= 0.5; if (step < 1e-4) break; continue; }  // 追不通就把步子减半
+        if (hn === null || hn < hhi) { step *= 0.5; if (step < 1e-4) break; continue; }  // 追不通或过了峰：步子减半
         lo = hi; hi = nx; hhi = hn;
         if (hhi >= hTarget || hi >= 89.4) break;
-        step *= 1.5;
+        step = Math.min(step * 1.5, STEP_MAX);
       }
     }
     if (hhi < hTarget) return hi;                       // 这颗镜头够不到该像高，给能追通的最大角

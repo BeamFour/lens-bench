@@ -243,7 +243,7 @@ LDM 卡片右上角的色标（逆向=琥珀、专利=青）、导入提示的�
 | `SURF n` / `CURV` / `DISZ` / `GLAS` / `CONI` | 面号、曲率、厚度、玻璃、圆锥系数 |
 | `TYPE STANDARD` / `EVENASPH` + `PARM 2..8` | 偶次非球面 r⁴…r¹⁶ |
 | `TYPE XASPHERE` + `XDAT 1..N` | 扩展非球面。系数在 Extra Data 里、且是**归一化**写的：`XDAT 1` 项数、`XDAT 2` 归一化半径 Rn、`XDAT 3` r² 项、`XDAT 4…` r⁴ r⁶ …，第 i 项系数要除掉 `Rn^(2i)` 才是 r 的实际幂次系数（Rn=1 时正好等于专利印的 A4…A20）。偶次非球面停在 r¹⁶，装不下 r¹⁸ / r²⁰ 的面才会写成这种（适马 50mm F1.4 DG DN Art 的 4 个面就是） |
-| `TYPE XOSPHERE` + `XDAT 1..N` | 扩展**奇次**非球面。同样在 Extra Data 里、同样按 Rn 归一化，但幂次是 r 的**每一个整数次**：`XDAT 3…` 依次是 r¹ r² r³ …，第 j 项系数除掉 `Rn^j`。偶次那套装不下奇数项，所以在 LDM 里存成 `ODD a1 a2 a3 …`（见下文「非球面的两种写法」）。佳能 RF 28mm F2.8 STM 的 6 个面就是这种，专利印成 A3…A10 |
+| `TYPE XOSPHERE` + `XDAT 1..N` | 扩展**奇次**非球面（Zemax Extended Odd Asphere）：z = 圆锥 + Σ Aⱼ·(r/Rn)^j，`XDAT 1` 项数 N、`XDAT 2` Rn、`XDAT 3…` 依次是 A1 A2 A3 …。**原样导入**成 `XODD Rn A1 … AN`：Rn 不除、N 项不删、数字不截断，LDM 里看到的就是文件 / 专利印的那组数（表面类型列显示「扩展奇次」，系数列表头 Rn A1 A2 …），换算成 r 的实际系数是内核读入时才做。富士 XF / GF 的专利仿真几乎全是这种（A3…A20），佳能 RF 28mm F2.8 STM 的 6 个面也是（Rn = 2.8） |
 | `STOP` | 光阑面 |
 | `THI Sn OAL Sa..Sb v` (.seq) | CODE V 的总长解，等价于 Zemax 的 `TCOM`。CODE V 导出时已把解算完的厚度写进 `S` 行和 `ZOO THI`，所以只作提示、不需要重算 |
 | `TCOM` | 厚度「互补 / Compensator」解：本面厚度 = 值 − 参考面厚度 |
@@ -323,9 +323,9 @@ Zemax 的视场表通常从大到小，转换时会重排成由小到大，渐�
   "src":  "SIGMA 35mm F1.4 DG Art II E2.zmx",
   "kind": "zmx",
   "tx":   "82.38  2.45  S-NPH4  -\n…",       // 每行：R 厚度 玻璃 半通光 [圆锥 A4 A6 …]
-                                             // 非球面两种写法：默认 A4 A6 A8 …（偶次，第 i 项 r^(2i+4)）；
-                                             // 以 ODD 开头则是 ODD a1 a2 a3 …（r 的任意整数次幂，第 j 项 r^j）。
-                                             // 两者互斥，后者对应 Zemax 的 XOSPHERE，专利里印成 A3…A10 那种。
+                                             // 非球面写法：默认 A4 A6 A8 …（偶次，第 i 项 r^(2i+4)）；
+                                             // 以 XODD 开头是 XODD Rn A1 … AN（Zemax XOSPHERE 原样，第 j 项 Aⱼ·(r/Rn)^j）；
+                                             // 以 ODD 开头是早先的写法 ODD a1 a2 …（已除掉 Rn 的实际系数，第 j 项 r^j），照旧认。三者整行互斥。
   "stop": 12,                                 // 1 起
   "fno": 1.47, "apmode": "fnoinf",
   "fmode": "height", "fov": 21.6, "nfield": 6,

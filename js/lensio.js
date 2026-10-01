@@ -331,17 +331,15 @@ var LENSIO = (function () {
         if (!nT) out.warn.push('第 ' + i + ' 面是扩展非球面，但 Extra Data 里没有项数 (XDAT 1)，已按球面处理。');
       } else if (s.type === 'XOSPHERE') {
         /* 扩展**奇次**非球面：和 XASPHERE 一样把系数放在 Extra Data 里、按归一化半径写，
-           但幂次是 r 的**每一个整数次**（专利里印成 A3…A10 那种）：
-             XDAT 1 = 项数 N、XDAT 2 = Rn、XDAT 3… = r¹ r² r³ …，第 j 项系数 / Rn^j 才是 r 的实际系数。
-           本页面型的默认那套只有偶次（r⁴ r⁶ r⁸…），装不下奇数项，所以写成 ODD 通用幂级数。 */
+           但幂次是 r 的**每一个整数次**（专利里印成 A3…A20 那种）：
+             z += Σⱼ Aⱼ·(r/Rn)^j      XDAT 1 = 项数 N、XDAT 2 = Rn、XDAT 3… = A1 A2 A3 …
+           **原样存**成 `XODD Rn A1 … AN`：Rn 不除掉、N 项一项不少（末尾的 0 也留着，项数就是 N），
+           数字用最短的无损写法（String），不经 fmt 的 12 位截断——LDM 里看到的就是文件 / 专利印的那组数。
+           换算成 r 的实际系数是内核读入时的事（optics.js parsePrescription）。 */
         var xo = s.xdat || [], nO = Math.round(xo[1] || 0), Ro = xo[2] || 1;
-        var ao = [];
-        for (j = 1; j <= nO; j++) {
-          var oj = xo[j + 2] || 0;
-          ao.push(oj ? fmt(oj / Math.pow(Ro, j)) : '0');
-        }
-        while (ao.length && ao[ao.length - 1] === '0') ao.pop();
-        if (ao.length) { r.asph = 'ODD ' + ao.join(' '); if (!r.k) r.k = '0'; }
+        var ao = [], anyO = false;
+        for (j = 1; j <= nO; j++) { var oj = xo[j + 2] || 0; if (oj) anyO = true; ao.push(String(oj)); }
+        if (anyO) { r.asph = 'XODD ' + String(Ro) + ' ' + ao.join(' '); if (!r.k) r.k = '0'; }
         else out.warn.push('第 ' + i + ' 面是扩展奇次非球面，但 Extra Data 里没有系数，已按球面处理。');
       } else if (s.type === 'BINARY_2') {
         /* 二元面 / 衍射面（尼康 PF、佳能 DO 都是它）：基底是球面，另加相位

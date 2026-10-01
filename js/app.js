@@ -181,23 +181,39 @@
   }
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
 
-  /* 非球面项拆列：r.asph 仍以空格分隔的字符串存，渲染时切成 A4 A6 A8 … 独立单元格 */
-  function asphArr(r) {
+  /* 非球面项拆列：r.asph 仍以空格分隔的字符串存，渲染时切成独立单元格。
+     两种排法：默认偶次是 A4 A6 A8 …；扩展奇次（存成 `XODD Rn A1 … AN`，Zemax XOSPHERE 原样）
+     关键字不占格子，格子依次是 Rn、A1、A2 …，和文件 / 专利印的一一对应。 */
+  function asphTok(r) {
     var t = (r.asph || '').trim();
     return t ? t.split(/[\s,;]+/) : [];
   }
+  function asphKind(r) { var t = asphTok(r); return t.length && /^xodd$/i.test(t[0]) ? 'xodd' : 'even'; }
+  function asphArr(r) { var t = asphTok(r); return asphKind(r) === 'xodd' ? t.slice(1) : t; }
+  function asphLab(kind, j) { return kind === 'xodd' ? (j ? 'A' + j : 'Rn') : 'A' + (4 + 2 * j); }
   function setAsphTerm(r, idx, v) {
-    var a = asphArr(r);
+    var a = asphTok(r), off = asphKind(r) === 'xodd' ? 1 : 0;
+    idx += off;
     while (a.length <= idx) a.push('');
     a[idx] = String(v).trim();
-    while (a.length && !a[a.length - 1]) a.pop();
-    r.asph = a.join(' ');
+    while (a.length > off && !a[a.length - 1]) a.pop();
+    // 中间清空的格子补 0：存的是空格分隔串，空项一折叠，后面的系数就整体错位到低一次去了
+    for (var q = off; q < a.length; q++) if (!a[q]) a[q] = '0';
+    r.asph = (off && a.length === 1) ? '' : a.join(' ');
   }
   function asphCols() {
     var m = 0;
     state.rows.forEach(function (r) { m = Math.max(m, asphArr(r).length); });
-    return Math.max(4, Math.min(m + 1, 12));
+    return Math.max(4, Math.min(m + 1, 24));
   }
+  function asphHeadKind() {
+    var nX = 0, nE = 0;
+    state.rows.forEach(function (r) { if (asphTok(r).length) { if (asphKind(r) === 'xodd') nX++; else nE++; } });
+    return nX && nE ? 'mix' : (nX ? 'xodd' : 'even');
+  }
+  function typLabel(r) { return asphKind(r) === 'xodd' ? '扩展奇次' : (isAsph(r) ? '非球面' : '球面'); }
+  var XODD_TIP = '扩展奇次非球面（Zemax Extended Odd Asphere / XOSPHERE）：z = 圆锥 + Σ Aⱼ·(r/Rn)^j，j = 1…N。' +
+    '系数是文件 / 专利印的原值，Rn 为归一化半径。清空所有系数格回到球面';
 
   function renderLDE() {
     var NA = asphCols(), i2;
@@ -208,8 +224,12 @@
       '<th style="min-width:126px">玻璃</th>' +
       '<th style="min-width:80px">半孔径</th>' +
       '<th style="min-width:74px">圆锥<br>系数</th>';
+    // 表头按这颗镜头用到的面型标：全是扩展奇次就标 Rn A1 A2 …，没有就标 A4 A6 …，混用时上下两行都标
+    var hk = asphHeadKind();
     for (i2 = 0; i2 < NA; i2++)
-      hd += '<th class="ac' + (i2 ? '' : ' ac0') + '" style="min-width:132px">A' + (4 + 2 * i2) + '</th>';
+      hd += '<th class="ac' + (i2 ? '' : ' ac0') + '" style="min-width:132px">' +
+        (hk === 'mix' ? asphLab('even', i2) + '<br><span class="ac2">' + asphLab('xodd', i2) + '</span>'
+                      : asphLab(hk, i2)) + '</th>';
     $('ldeHead').innerHTML = hd + '</tr>';
 
     var pad = '<td></td><td></td><td></td>' + new Array(NA + 1).join('<td></td>');
@@ -219,11 +239,12 @@
       '" placeholder="inf" title="物距：物面到第 1 面顶点的距离 mm，写 inf 为无限远。改完按「最佳对焦」，镜头会沿自己的对焦群重新对焦"' +
       ' spellcheck="false" autocapitalize="off" autocorrect="off"></td>' + pad + '</tr>'];
     state.rows.forEach(function (r, i) {
-      var isStop = i === state.stop, a = asphArr(r), td = '';
-      for (i2 = 0; i2 < NA; i2++) td += cellA(i, i2, asphDisp(a[i2] || ''));
+      var isStop = i === state.stop, a = asphArr(r), kd = asphKind(r), td = '';
+      // 灰字项名只给非球面行（空格子提示这一格是哪一项）；球面行留白，免得和表头打架
+      for (i2 = 0; i2 < NA; i2++) td += cellA(i, i2, asphDisp(a[i2] || ''), asphLab(kd, i2), !a.length);
       h.push('<tr data-r="' + i + '"' + (i === state.sel ? ' class="sel"' : '') + '>' +
         '<td class="num' + (isStop ? ' stop' : '') + '" data-r="' + i + '" title="点击设为光阑">' + (isStop ? '光阑' : (i + 1)) + '</td>' +
-        '<td class="typ" data-typ="' + i + '">' + (isAsph(r) ? '非球面' : '球面') + '</td>' +
+        '<td class="typ" data-typ="' + i + '"' + (kd === 'xodd' ? ' title="' + esc(XODD_TIP) + '"' : '') + '>' + typLabel(r) + '</td>' +
         cell(i, 'R', r.R, 'inf', cfgHas(i, 'R')) + cell(i, 'T', r.T, '0', cfgHas(i, 'T')) +
         cellT(i, 'mat', r.mat, '') + cellSd(i, r) +
         cell(i, 'k', r.k, '') + td + '</tr>');
@@ -276,9 +297,9 @@
     var c = state.cfgs && state.cfgs[state.cfg];
     if (c) c.obj = parseObjDist(text);
   }
-  function cellA(i, j, v) {
+  function cellA(i, j, v, lab, bare) {
     return '<td class="ac' + (j ? '' : ' ac0') + '"><input data-r="' + i + '" data-f="a' + j + '" value="' + esc(v) +
-      '" spellcheck="false" autocapitalize="off" autocorrect="off"></td>';
+      '" placeholder="' + (bare ? '' : lab) + '" title="' + lab + '" spellcheck="false" autocapitalize="off" autocorrect="off"></td>';
   }
   /* 非球面系数很小，统一按指数记法显示，省列宽又不丢精度 */
   function asphDisp(t) {
@@ -2093,10 +2114,20 @@
     var r = state.rows[+t.dataset.r]; if (!r) return;
     var fld = t.dataset.f;
     glassListSync(t, false);
-    if (fld.charAt(0) === 'a' && /^a\d+$/.test(fld)) setAsphTerm(r, +fld.slice(1), t.value);
+    if (fld.charAt(0) === 'a' && /^a\d+$/.test(fld)) {
+      // 在第一个系数格写 XODD 就把这一面换成扩展奇次（格子整体右移一位成 Rn A1 …），清空所有系数换回来；
+      // 这两种、以及偶次 / 扩展奇次从单一变成混用（或反过来）时表头要换，都得整表重绘，焦点放回原格
+      var kd0 = asphKind(r), hk0 = asphHeadKind();
+      setAsphTerm(r, +fld.slice(1), t.value);
+      if (asphKind(r) !== kd0 || asphHeadKind() !== hk0) {
+        var ri0 = t.dataset.r; renderLDE();
+        var nf = tb.querySelector('input[data-r="' + ri0 + '"][data-f="' + (asphKind(r) !== kd0 ? 'a0' : fld) + '"]');
+        if (nf) { nf.focus(); nf.setSelectionRange(nf.value.length, nf.value.length); }
+      }
+    }
     else { r[fld] = t.value; cfgWriteBack(+t.dataset.r, fld, t.value); }
     var tc = tb.querySelector('[data-typ="' + t.dataset.r + '"]');
-    if (tc) tc.textContent = isAsph(r) ? '非球面' : '球面';
+    if (tc) tc.textContent = typLabel(r);
     schedule(240);
   });
   tb.addEventListener('keydown', function (e) {
@@ -2125,7 +2156,7 @@
     if (!/[\t\n]/.test(txt.trim())) return;                       // 单格：走默认行为
     e.preventDefault();
     var FL = FIELDS.slice(0, 5);                                   // R T mat sd k
-    for (var ai = 0; ai < 12; ai++) FL.push('a' + ai);
+    for (var ai = 0; ai < 24; ai++) FL.push('a' + ai);
     var r0 = +inp.dataset.r, c0 = FL.indexOf(inp.dataset.f);
     if (c0 < 0) c0 = 0;
     txt.replace(/\r/g, '').split('\n').filter(function (l) { return l.trim().length; })
