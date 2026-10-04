@@ -203,6 +203,19 @@ node tools/import.js --no-check      # 跳过几何自检
 `order` 决定品牌下拉的顺序，组内按名字排；没在 `lenses` 里登记的镜头归到 `order` 的最后一组，
 名字用文件名。`build.js` 在打包时套用这份表，所以改完名字只要重跑 `node tools/build.js`。
 
+### 按品牌 / 按镜头指定光谱（`brandWl` / `wl`）
+
+镜头文件自带的波长权重五花八门。要让同一品牌统一用厂商自己的光谱（徕卡用 **Leica Weighted 455–644**），写在 `meta.json`：
+
+```json
+"brandWl": { "徕卡 Leica": "leica" },
+"lenses":  { "<id>": { "wl": "vis" } }
+```
+
+值是 `src/lensio.js` 里 `WLSETS` 的预设名（`leica` / `vis` / `jp` / `p5` / `p3` / `p1`，和网页「载入预设」同一份）；单颗的 `wl` 覆盖品牌默认。
+`tools/wlapply.js` 把它写进镜头 JSON 的 `wl` / `pri`，`tools/import.js` 在转换之后、渐晕之前自动跑——
+渐晕、几何自检、MTF 都按换过的光谱算，重新转换也不会被文件原值冲掉。
+
 ### 数据来源标记（`origin`）
 
 同一颗镜头常常有**逆向**和**专利**两份数据，性能可能差很多，必须在界面上分得开：

@@ -708,8 +708,24 @@ var LENSIO = (function () {
     };
   }
 
+  /* 波长预设：[波长 nm, 权重]，一律按长→短排列，WLPRI 指主波长的行号。
+     网页的「载入预设」和命令行 tools/wlapply.js（meta.json 按品牌 / 按镜头指定光谱）共用这一份。 */
+  var WLSETS = {
+    p5:    [['656.3', '10'], ['587.6', '27'], ['546.1', '29'], ['486.1', '23'], ['435.8', '11']],
+    p3:    [['656.3', '1'], ['587.6', '1'], ['486.1', '1']],
+    p1:    [['587.6', '1']],
+    // Zemax「VIS Weighted (C–g, 5500 K Blackbody)」
+    vis:   [['656.3', '0.8982'], ['587.6', '0.9728'], ['546.1', '1'], ['486.1', '0.984'], ['435.8', '0.911']],
+    // Leica Weighted：短波截到 455，长波用 C' 线 643.8
+    leica: [['643.8', '7'], ['587.6', '8'], ['546.1', '9'], ['486.1', '7'], ['455.0', '4']],
+    // 日本厂商常用的光谱权重，重心明显压在 e 线
+    jp:    [['656.3', '3'], ['587.6', '22'], ['546.1', '30'], ['486.1', '12'], ['435.8', '3']]
+  };
+  // 主波长一律取 546.1（e 线绿光）；F d C 等权和 d 单色里没有这条线，只能退回 d 线
+  var WLPRI = { p5: 2, p3: 1, p1: 0, vis: 2, leica: 2, jp: 2 };
+
   return { parseSeq: parseSeq, parseZmx: parseZmx, parseAny: parseAny, toLens: toLens,
            fileToLens: fileToLens, decode: decode, rowsToText: rowsToText, slug: slug, wlColor: wlColor,
-           lensSub: lensSub, camCompact: camCompact };
+           lensSub: lensSub, camCompact: camCompact, WLSETS: WLSETS, WLPRI: WLPRI };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = LENSIO;
