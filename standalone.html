@@ -177,12 +177,18 @@ table.lde td.zoo{box-shadow:inset 2px 0 0 var(--accent)}
 .ab-bar{display:flex;height:10px;gap:1px;min-width:4px;justify-self:start}
 .ab-bar i{display:block;height:100%;background:var(--ink-3);border-radius:1px}
 .ab-bc{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;font-weight:500;color:var(--ink);text-align:right}
-.ab-linklist{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-.ab-linklist li{font-size:13px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
-.ab-linklist a{color:var(--accent);text-decoration:none;font-weight:600}
-.ab-linklist a:hover{text-decoration:underline}
-.ab-linklist li span{color:var(--ink-3);font-size:12px}
-.ab-linklist .ab-empty{color:var(--ink-3)}
+/* 友情链接：卡片，名字用强调色浅底 + 左侧色条，和顶栏「对比两颗」同一组变量 */
+.about .ab-links{padding-top:22px}
+.about .ab-links h3{font-size:16px;margin-bottom:14px}
+.ab-linklist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.ab-linklist li{display:flex;flex-direction:column;gap:4px;padding:14px 18px;border-radius:8px;
+  position:relative;background:var(--accent-soft);border:1px solid var(--accent);border-left-width:4px;transition:transform .12s}
+.ab-linklist li:hover{transform:translateY(-1px)}
+.ab-linklist a{color:var(--accent);text-decoration:none;font-weight:700;font-size:19px;letter-spacing:.01em}
+.ab-linklist a::after{content:"";position:absolute;inset:0}   /* 整张卡片都可点 */
+.ab-linklist li:hover a{text-decoration:underline}
+.ab-linklist li span{color:var(--ink-2);font-size:13px}
+.ab-linklist .ab-empty{display:block;padding:0;border:0;background:none;color:var(--ink-3);font-size:13px}
 @media(max-width:560px){.ab-num{font-size:56px}.ab-row{grid-template-columns:96px 1fr 30px}}
 @media(max-width:560px){.sheetbody{padding:12px 12px 48px}.sheetbar{padding:9px 12px;gap:8px}.sheetbar h2{font-size:13px}.sheetnote{display:none}}
 .hdrsel{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--ink-3);margin-right:8px;white-space:nowrap}
@@ -678,6 +684,8 @@ table.data tbody tr:hover{background:var(--panel-2)}
 <section class="ab-links"><h3>友情链接</h3>
   <ul class="ab-linklist">
     <!-- <li><a href="https://…" target="_blank" rel="noopener">名称</a><span>一句话介绍</span></li> -->
+    <li><a href="https://www.zhihu.com/people/bruce-dewey" target="_blank" rel="noopener">DEWEY</a><span>知乎</span></li>
+    <li><a href="https://www.zhihu.com/people/lu-guo-ning-jie" target="_blank" rel="noopener">路过凝结</a><span>知乎</span></li>
   </ul>
 </section>
     </div>
