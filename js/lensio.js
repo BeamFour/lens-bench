@@ -7,6 +7,12 @@ var LENSIO = (function () {
   'use strict';
 
   var PAL = ['#DE4A4A', '#C08E1A', '#2F9945', '#2596D6', '#8654E0', '#7A8892'];
+  /* 牌号查得到吗：由调用方注入（网页里是 OPT 的玻璃库，tools/zmx2lens.js 也加载同一份）。
+     zmx 的 GLAS 行除了牌号还记了 nd / νd / ΔPg,F；牌号在内置库里查不到时（老牌号，比如已停产的
+     SCHOTT SFS3），就用文件自己记的这组数当模型玻璃——否则内核会把整片当空气，一阶量整个错掉
+     （尼康 AF 85mm F1.8 曾因此 EFL 算成 53.9、后截距为负，AI-S 135mm F2.8 算成 EFL 1056）。 */
+  var glassKnown = null;
+  function setGlassCheck(fn) { glassKnown = (typeof fn === 'function') ? fn : null; }
   function num(s) { var v = parseFloat(s); return isFinite(v) ? v : null; }
   function fmt(v) { return String(Number(v.toPrecision(12))); }
 
@@ -233,6 +239,10 @@ var LENSIO = (function () {
             if ((isFinite(dN) && dN) || (isFinite(dV) && dV))
               cur.glas = tk[1] + '~' + (isFinite(dN) ? dN : 0) + '~' + (isFinite(dV) ? dV : 0);
           }
+          // 目录牌号（标志 0 / 4）：留下文件记的 nd / νd，牌号查不到时兜底（见 setGlassCheck）
+          if ((mFlag === 0 || mFlag === 4) && isFinite(mNd) && mNd > 1 && isFinite(mVd) && mVd > 0)
+            cur.glasNV = { name: tk[1], nd: mNd, vd: mVd, dp: isFinite(mDp) ? mDp : 0,
+                           dN: mFlag === 4 ? (num(tk[10]) || 0) : 0, dV: mFlag === 4 ? (num(tk[11]) || 0) : 0 };
           continue;
         }
         if (k === 'CONI') { cur.coni = num(tk[1]); continue; }
@@ -287,6 +297,14 @@ var LENSIO = (function () {
       var R = (s.curv && Math.abs(s.curv) > 1e-14) ? 1 / s.curv : 0;
       var r = { R: R ? fmt(R) : 'inf', T: fmt(s.disz === Infinity ? 0 : (s.disz || 0)),
                 mat: s.glas || '', sd: '', k: '', asph: '' };
+      // 牌号内置库里没有：换成文件自己记的 nd/νd/ΔPg,F 模型玻璃（偏移解的 Δnd / Δνd 一并加上）
+      if (glassKnown && s.glasNV && !glassKnown(s.glasNV.name)) {
+        var gv = s.glasNV, gnd = gv.nd + gv.dN, gvd = gv.vd + gv.dV;
+        r.mat = gnd.toFixed(6) + '/' + gvd.toFixed(4) + (gv.dp ? '/' + gv.dp.toFixed(6) : '');
+        out.warn.push('第 ' + i + ' 面的牌号 ' + gv.name + ' 不在内置玻璃库里（多半是已停产的老牌号），改用文件 GLAS 行自己记的 nd ' +
+          gnd.toFixed(5) + ' / νd ' + gvd.toFixed(3) + (gv.dp ? ' / ΔPg,F ' + gv.dp : '') +
+          (gv.dN || gv.dV ? '（已含偏移解 Δnd ' + gv.dN + ' / Δνd ' + gv.dV + '）' : '') + ' 当模型玻璃。不这样做这片会被当成空气。');
+      }
       // Zemax 的 FLAP 是「浮动通光」——通光等于该结构下自动算出的半口径，各结构不同。
       // 文件里只存了当前结构那一份，硬套到近摄结构会把光线全挡掉。
       // 所以有渐晕系数时不导入通光（瞳由渐晕系数完整定义，Zemax 算 MTF 也是这么做的），
@@ -726,6 +744,6 @@ var LENSIO = (function () {
 
   return { parseSeq: parseSeq, parseZmx: parseZmx, parseAny: parseAny, toLens: toLens,
            fileToLens: fileToLens, decode: decode, rowsToText: rowsToText, slug: slug, wlColor: wlColor,
-           lensSub: lensSub, camCompact: camCompact, WLSETS: WLSETS, WLPRI: WLPRI };
+           lensSub: lensSub, camCompact: camCompact, WLSETS: WLSETS, WLPRI: WLPRI, setGlassCheck: setGlassCheck };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = LENSIO;
