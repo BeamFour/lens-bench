@@ -586,8 +586,10 @@ var OPT = (function () {
           /* 鱼眼的大视场光线几乎横着进来（与光轴夹角 > 80°），平移到切平面要走很远，
              两个根都在真实起点前方、又都落在顶点那一支（1 − (1+k)·c·z > 0）时，「离切平面近」的是穿出点，
              光线先碰到的是 t 小的那个。只对这种近乎横向的光线改：普通镜头边缘光线的「先碰到」
-             可能落在延长球面的口径之外（RF 28 饼干头实测过，满视场渐晕被算错 0.17），那里仍照旧 */
-          if (t0 !== undefined && t1 !== t2 && Math.abs(D[2]) < WIDE_COS) {
+             可能落在延长球面的口径之外（RF 28 饼干头实测过，满视场渐晕被算错 0.17），那里仍照旧。
+             判据必须带符号：超过 90° 的光线往回走（D_z < 0），写成 |D_z| 的话 100° 以外又不算「横向」了，
+             220° 鱼眼的 110° 视场因此取到前球面背面那一支，整束画不出来 */
+          if (t0 !== undefined && t1 !== t2 && D[2] < WIDE_COS) {
             var lo = Math.min(t1, t2), hi = Math.max(t1, t2), eps = 1e-9 * (1 + Math.abs(t0));
             if (lo > t0 + eps && t !== lo &&
                 1 - (1 + k) * c * (pz + lo * D[2]) > 0 && 1 - (1 + k) * c * (pz + hi * D[2]) > 0) t = lo;
@@ -1608,22 +1610,44 @@ var OPT = (function () {
     function sphereOk(R) {
       rEnt = R; zcEnt = zEnter + R;
       for (var q = 0; q < entRays.length; q++) {
-        var e = entRays[q], p = entryPoint(e.P0, e.P1, true);
+        var e = entRays[q]; if (e.side) continue;
+        var p = entryPoint(e.P0, e.P1, true);
         if (!p || Math.hypot(p[0], p[1]) > 0.7 * R) return false;
       }
       return true;
     }
-    var R0 = (h1 * h1 + sEnt * sEnt) / (2 * sEnt), Rok = R0;
-    if (!sphereOk(R0)) {
-      var Rlo = R0, Rhi = R0;
-      for (var g = 0; g < 80 && !sphereOk(Rhi); g++) { Rlo = Rhi; Rhi *= 1.25; }
+    function fitSphere() {
+      var R0 = (h1 * h1 + sEnt * sEnt) / (2 * sEnt);
+      if (sphereOk(R0)) return R0;
+      var Rlo = R0, Rhi = R0, g;
+      for (g = 0; g < 80 && !sphereOk(Rhi); g++) { Rlo = Rhi; Rhi *= 1.25; }
+      if (g === 80 && !sphereOk(Rhi)) return null;
       for (var it = 0; it < 30; it++) { var Rm = (Rlo + Rhi) / 2; if (sphereOk(Rm)) Rhi = Rm; else Rlo = Rm; }
-      Rok = Rhi;
+      return Rhi;
+    }
+    /* 超过 ~100° 的鱼眼视场是从镜头侧后方射进首面边缘的（220° 的 Fisheye-Nikkor 6mm），
+       多大的前置球面都截不到它，拟合会一路放大到失败、入射段退回几百毫米外的起点，整张图被撑开。
+       只有「怎么都拟合不上」时才把这些侧入光线剔出去单独处理，能拟合的镜头（含 95° 的佳能双鱼眼）一位不变：
+       剔掉的那几条入射段按其余光线里最长的那段截断。 */
+    var Rok = fitSphere();
+    if (Rok === null) {
+      var Rbig = rEnt;
+      entRays.forEach(function (e) { var p = entryPoint(e.P0, e.P1, true); if (!p || Math.hypot(p[0], p[1]) > 0.7 * Rbig) e.side = true; });
+      Rok = fitSphere();
+      if (Rok === null) Rok = Rbig;
     }
     rEnt = Rok; zcEnt = zEnter + Rok;                    // 前置球面半径（凸面朝物方）、球心
+    var segMax = lead;
     entRays.forEach(function (e) {
+      if (e.side) return;
       var p = entryPoint(e.P0, e.P1);
       e.poly[0] = [p[2], p[1]];
+      segMax = Math.max(segMax, Math.hypot(e.P1[2] - p[2], e.P1[1] - p[1]));
+    });
+    entRays.forEach(function (e) {
+      if (!e.side) return;
+      var dz = e.P0[2] - e.P1[2], dy = e.P0[1] - e.P1[1], L0 = Math.hypot(dz, dy), k = L0 > segMax ? segMax / L0 : 1;
+      e.poly[0] = [e.P1[2] + k * dz, e.P1[1] + k * dy];
     });
 
     /* 每面的画图半径。优先级：
@@ -1652,11 +1676,25 @@ var OPT = (function () {
     var drawnIdx = [];
     for (var dq = 0; dq < S.length; dq++)
       if (S[dq].isGlass || (dq > 0 && S[dq - 1].isGlass)) drawnIdx.push(dq);
+    function extOf(j) {
+      var e = draw[j];
+      if (S[j].isGlass && j + 1 < S.length) e = Math.max(e, draw[j + 1]);
+      if (j > 0 && S[j - 1].isGlass) e = Math.max(e, draw[j - 1]);
+      return e;
+    }
     for (var dk = 0; dk + 1 < drawnIdx.length; dk++) {
       var d1 = drawnIdx[dk], dn = drawnIdx[dk + 1];
       var A = S[d1], B = S[dn], zA = zv[d1], zB = zv[dn];
       var want = Math.max(draw[d1], draw[dn]);
-      var gapAt = function (r) { return (zB + safeSag(B, r)) - (zA + safeSag(A, r)); };
+      /* 超出自身画图半径的那一段按机械边缘平切（和 profile 的画法一致），不能拿球面一路延伸：
+         鱼眼首片背面 R 18.2 / 半口径 18.16，延伸出去的球会「插进」首面，把首面从 40 夹回 35.09，
+         可实际画出来那里是一圈平边，离首面还有 1.46 mm */
+      // 平边也只延伸到本片的外径（同一片前后两面取大）：再往外没有材料，谈不上穿模
+      var rA = draw[d1], rB = draw[dn], eA = extOf(d1), eB = extOf(dn);
+      var gapAt = function (r) {
+        if (r > eA + 1e-9 || r > eB + 1e-9) return 1;
+        return (zB + safeSag(B, Math.min(r, rB))) - (zA + safeSag(A, Math.min(r, rA)));
+      };
       if (gapAt(want) >= 0) continue;                       // 到最外圈都没穿模
       var N2 = 64, lo = 0, hi = want;
       for (var d2 = 1; d2 <= N2; d2++) {                    // 先粗扫出第一次穿模的区间
