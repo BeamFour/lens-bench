@@ -755,6 +755,27 @@ var OPT = (function () {
     if (sys.zObj !== null && sys.zObj !== undefined) {
       // 有限物距：θ 定义为入瞳处主光线的倾角，物点高度由此确定，光线从物点射向入瞳上的 (ex,ey)
       var dz = sys.zEP - sys.zObj;
+      if (Math.cos(th) < WIDE_COS && dz > 0) {
+        /* 有限物距 + 超大视场（> 80°，鱼眼近摄）：平面物面上 h = −tanθ·d 在 90° 发散、过了 90° 变号——
+           物点跑到对侧，满视场实际追的是 180°−θ 的镜像光线（适马 15mm F1.4 DIAGONAL FISHEYE 的 92.9° 近摄结构
+           因此光线跑出通光 5 mm）。这里换成以入瞳中心为心的球面物面，半径取 d / cos80°，正好在 80° 处和平面
+           物面的物点重合（距离、方向都连续）；80° 以内仍走下面的平面写法，所有已有镜头逐位不变。
+           入瞳上的落点 (ex, ey) 取在垂直于主光线的平面上，和无限远鱼眼那条分支一样。项目记录 6.28。 */
+        var Rw = dz / WIDE_COS, Dw = [0, Math.sin(th), Math.cos(th)];
+        var Pw = [0, -Dw[1] * Rw, sys.zEP - Dw[2] * Rw];
+        var Ow = [ex, ey * Dw[2], sys.zEP - ey * Dw[1]];
+        var wx = Ow[0] - Pw[0], wy = Ow[1] - Pw[1], wz = Ow[2] - Pw[2], Lw = Math.sqrt(wx * wx + wy * wy + wz * wz);
+        var Dr = [wx / Lw, wy / Lw, wz / Lw];
+        /* 物点本身可能离得很远（半径 d / cos80° 能到 1~2 m），过了 90° 还在镜头后侧；从那么远处起追，
+           和大弯月形前片的球面求交会落到另一支根上（尼康 6mm F2.8 的 0.02x 在 110° 落到 S1 的 143 mm，口径才 110）。
+           所以沿同一条光线挪到和无限远鱼眼分支一样近的地方起追，省掉的那段光程用 opl0 补回，点光源的波前不变。 */
+        var Lf0 = (sys.zEP - sys.zStart) + sys.span + 50;
+        if (Lw > Lf0) {
+          var sk = Lw - Lf0;
+          return { P: [Pw[0] + Dr[0] * sk, Pw[1] + Dr[1] * sk, Pw[2] + Dr[2] * sk], D: Dr, pt: true, perp: true, opl0: sk };
+        }
+        return { P: Pw, D: Dr, pt: true, perp: true };
+      }
       var hO = -Math.tan(th) * dz;
       var dx = ex, dy = ey - hO, L2 = Math.sqrt(dx * dx + dy * dy + dz * dz);
       return { P: [0, hO, sys.zObj], D: [dx / L2, dy / L2, dz / L2], pt: true };
@@ -789,8 +810,9 @@ var OPT = (function () {
      唯卓仕 55/1.8 的 0.70 / 0.75 视场则被误判成多渐晕 0.12，而且同一颗镜头两次跑出来还不一样。 */
   function aim(sys, thetaDeg, tx, ty, lambda) {
     var s = sys.stopIdx, m = Math.abs(sys.pupilMag) > 1e-9 ? sys.pupilMag : 1;
+    var thCur = thetaDeg;                 // 只有超大视场的主光线延拓（chiefContinue）会临时改它
     var hit = function (x, y) {
-      var st = startRay(sys, thetaDeg, x, y);
+      var st = startRay(sys, thCur, x, y);
       var r = traceRay(sys, st.P, st.D, lambda, false, s + 1, true);
       return r.ok ? r.P : null;
     };
@@ -805,7 +827,20 @@ var OPT = (function () {
 
     if (!C.tried) {                       // 该视场的参考解（主光线），只解一次
       C.tried = true;
-      var ref = newton(0, 0, null, 0, 0, true);
+      var ref = null;
+      // 视场超过 80°（鱼眼）：主光线可能有不止一个解（还有一支绕过前片大弯月的伪解），
+      // 冷启动或扫描种子会随物距落到不同支上——尼康 Fisheye 6mm F2.8 的 0.02x 在 110° 就落到了 S1 高 143 mm 的伪解。
+      // 先在 80° 解（这里只有一支），再按固定步长延拓到目标角，每步用上一步的解当种子。
+      // 序列只由 θ 决定，结果仍是 (θ, λ) 的纯函数；80° 以内不走这里，已有镜头逐位不变（项目记录 6.28）。
+      if (Math.abs(thetaDeg) > 80) {
+        var cs = chiefContinue();
+        if (cs && storeJac(cs[0], cs[1])) ref = cs;
+        else if (cs || Math.abs(thetaDeg) > 80) {
+          // 延拓断了：从扫描到的所有过零点里取离延拓预测最近的那个，而不是第一个
+          var sp = seedChief(cs ? cs[1] : null); if (sp) ref = newton(sp[0], sp[1], null, 0, 0, true);
+        }
+      }
+      if (!ref) ref = newton(0, 0, null, 0, 0, true);
       if (!ref) { var sd = seedChief(); if (sd) ref = newton(sd[0], sd[1], null, 0, 0, true); }
       if (ref) { C.ex = ref[0]; C.ey = ref[1]; C.ok = true; }
     }
@@ -820,19 +855,57 @@ var OPT = (function () {
     if (!sol && J) sol = newton(tx / m, ty / m, null, tx, ty, false);   // 参考起点不好使，冷启动重来
     return sol ? { ex: sol[0], ey: sol[1] } : null;
 
+    /* 超大视场主光线的延拓：从轴上（θ = 0，主光线就在入瞳中心）出发，80° 以内每 2° 一步、之后每 1° 一步，
+       最后一步正好落在目标角；每步的种子按前两步线性外推。
+       不从 80° 冷启动：鱼眼的入瞳随视场剧烈移动，80° 就可能已经有多支解（尼康 6mm F2.8 在 80° 冷启动落到 ey = 100）。
+       返回目标角上的解，延拓中途断了返回 null（thCur 都会还原）。 */
+    function chiefContinue() {
+      var sg = thetaDeg < 0 ? -1 : 1, tEnd = Math.abs(thetaDeg), p = [0, 0], q = null, tp = 0, t, tq;
+      while (p && tp < tEnd) {
+        t = Math.min(tEnd, tp + (tp < 80 ? 2 : 1));
+        var gx = p[0], gy = p[1];
+        var wideP = Math.cos(tp * Math.PI / 180) < WIDE_COS, wideT = Math.cos(t * Math.PI / 180) < WIDE_COS;
+        if (wideT && !wideP) {
+          // 跨过 80°：startRay 的 (ex, ey) 从「z = zEP 平面」换成「垂直于主光线的平面」，两者差 cosθ。
+          // 种子要换算过去，跨界这一步也不外推（前两步在另一套坐标里）
+          gy = p[1] * Math.cos(tp * Math.PI / 180); q = null;
+        } else if (q) { gx += (p[0] - q[0]) * (t - tp) / (tp - tq); gy += (p[1] - q[1]) * (t - tp) / (tp - tq); }
+        thCur = sg * t;
+        var n2 = newton(gx, gy, null, 0, 0, false) || newton(p[0], p[1], null, 0, 0, false);
+        q = p; tq = tp; p = n2; tp = t;
+      }
+      thCur = thetaDeg;
+      return p;
+    }
+    /* 在已知的主光线解上补一份雅可比（别的瞳点拿它当参考）。 */
+    function storeJac(X, Y) {
+      var r = hit(X, Y), rx = hit(X + d, Y), ry = hit(X, Y + d);
+      if (!r || !rx || !ry) return false;
+      var a = (rx[0] - r[0]) / d, b = (ry[0] - r[0]) / d, c = (rx[1] - r[1]) / d, e = (ry[1] - r[1]) / d, det = a * e - b * c;
+      if (Math.abs(det) < 1e-14) return false;
+      C.a = a; C.b = b; C.c = c; C.e = e; C.det = det;
+      return true;
+    }
+
     /* 从入瞳中心起步追不通（鱼眼 65° 以外：入瞳随视场往前跑得很远，近轴那一点的光线根本进不了镜头），
        就沿子午方向扫一遍起点，找光阑面落点跨过 0 的那一段线性插值出种子，再交给牛顿。
        只在冷启动失败时才走，已有镜头不经过这里；结果仍只依赖 (θ, λ)。 */
-    function seedChief() {
-      var S = 3 * Math.max(sys.span || 0, sys.epd), N = 600, prev = null, best = null, i;
+    // pref 给了（超大视场延拓的预测值）就在所有过零点里取离它最近的；没给照旧取扫描到的第一个
+    function seedChief(pref) {
+      var S = 3 * Math.max(sys.span || 0, sys.epd), N = 600, prev = null, best = null, i, near = null;
+      var usePref = pref !== null && pref !== undefined && isFinite(pref);
       for (i = 0; i <= N; i++) {
         var ey = -S + 2 * S * i / N, r = hit(0, ey);
         if (!r) { prev = null; continue; }
         if (!best || Math.abs(r[1]) < Math.abs(best[1])) best = [ey, r[1]];
-        if (prev && (prev[1] <= 0) !== (r[1] <= 0))
-          return [0, prev[0] + (ey - prev[0]) * prev[1] / (prev[1] - r[1])];
+        if (prev && (prev[1] <= 0) !== (r[1] <= 0)) {
+          var z0 = prev[0] + (ey - prev[0]) * prev[1] / (prev[1] - r[1]);
+          if (!usePref) return [0, z0];
+          if (near === null || Math.abs(z0 - pref) < Math.abs(near - pref)) near = z0;
+        }
         prev = [ey, r[1]];
       }
+      if (near !== null) return [0, near];
       return best ? [0, best[0]] : null;
     }
 
@@ -873,7 +946,7 @@ var OPT = (function () {
       ok: true, x: ix, y: iy, pts: r.pts, P: r.P, D: r.D,
       // 无限远物：各光线起点在同一 z 平面上，要折算到垂直入射方向的参考面（去掉倾斜项）；
       // 有限物距：所有光线同出一点，只差一个活塞项，不用修正；超大视场的起点本来就在垂直面上，也不用
-      opl: r.opl + (st.pt || st.perp ? 0 : (D[0] * P[0] + D[1] * P[1]))
+      opl: r.opl + (st.opl0 || 0) + (st.pt || st.perp ? 0 : (D[0] * P[0] + D[1] * P[1]))
     };
   }
 
