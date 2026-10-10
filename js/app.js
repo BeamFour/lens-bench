@@ -96,7 +96,7 @@
      网页、镜头库 JSON、命令行转换用的是同一个函数，颜色必然一致 */
   var wlColor = LENSIO.wlColor;
   // 网页里拖入 .zmx 时也一样：牌号查不到就用文件 GLAS 行记的 nd/νd 当模型玻璃（见 lensio.js setGlassCheck）
-  LENSIO.setGlassCheck(function (name) { try { return !OPT.parseMaterial(name).err; } catch (e) { return true; } });
+  LENSIO.setGlassCheck(function (name) { try { var m = OPT.parseMaterial(name); return m.err ? false : (m.nd ? { nd: m.nd, vd: m.vd, cat: m.cat, sub: m.sub } : true); } catch (e) { return true; } });
 
   /* 波长预设：定义在 lensio.js（命令行 tools/wlapply.js 按 meta.json 给镜头换光谱也用它） */
   var WLSETS = LENSIO.WLSETS, WLPRI = LENSIO.WLPRI;

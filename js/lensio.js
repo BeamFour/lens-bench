@@ -11,8 +11,35 @@ var LENSIO = (function () {
      zmx 的 GLAS 行除了牌号还记了 nd / νd / ΔPg,F；牌号在内置库里查不到时（老牌号，比如已停产的
      SCHOTT SFS3），就用文件自己记的这组数当模型玻璃——否则内核会把整片当空气，一阶量整个错掉
      （尼康 AF 85mm F1.8 曾因此 EFL 算成 53.9、后截距为负，AI-S 135mm F2.8 算成 EFL 1056）。 */
+  /* 回调也可以返回 {nd, vd, cat, sub}：同名牌号在几家目录里都有时（LAF2 在 SCHOTT 和 HOYA 都有、色散不同），
+     内置库按自己的目录顺序取第一个，Zemax 却按文件 GCAT 行的顺序取——两边不是同一块玻璃。
+     这时拿文件 GLAS 行记的 nd / νd 去对，换成对得上的 `牌号_目录`（见 pickCatalog）。 */
   var glassKnown = null;
   function setGlassCheck(fn) { glassKnown = (typeof fn === 'function') ? fn : null; }
+  var CATS = ['SCHOTT', 'OHARA', 'HOYA', 'HIKARI', 'CDGM', 'SUMITA', 'NHG', 'NIKON', 'CHINA', 'CORNFR', 'CHANCE',
+              'CORNING', 'HERAEUS', 'KODAK', 'MITSUI', 'OSAKA', 'PILKINGTON', 'SPECIAL', 'ZEON'];
+  function ckey(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function glassMatch(g, v) { return Math.abs(g.nd - v.nd) <= 2e-5 && Math.abs(g.vd - v.vd) <= 0.02; }
+  function pickCatalog(v, gcat) {
+    var order = [];
+    gcat.forEach(function (g) { var gk = ckey(g); CATS.forEach(function (c) { if (gk.indexOf(ckey(c)) >= 0 && order.indexOf(c) < 0) order.push(c); }); });
+    CATS.forEach(function (c) { if (order.indexOf(c) < 0) order.push(c); });
+    for (var i = 0; i < order.length; i++) {
+      var g = glassKnown(v.name + '_' + order[i]);
+      if (g && typeof g === 'object' && !g.sub && ckey(g.cat) === ckey(order[i]) && glassMatch(g, v)) return { name: v.name + '_' + order[i], g: g };
+    }
+    return null;
+  }
+  // 牌号在文件 GCAT 列的目录里（内置库也有的那几家）第一次出现在哪一家——Zemax 就用那一块
+  function inGcat(name, gcat) {
+    var order = [];
+    gcat.forEach(function (g) { var gk = ckey(g); CATS.forEach(function (c) { if (gk.indexOf(ckey(c)) >= 0 && order.indexOf(c) < 0) order.push(c); }); });
+    for (var i = 0; i < order.length; i++) {
+      var g = glassKnown(name + '_' + order[i]);
+      if (g && typeof g === 'object' && !g.sub && ckey(g.cat) === ckey(order[i])) return { name: name + '_' + order[i], g: g };
+    }
+    return null;
+  }
   function num(s) { var v = parseFloat(s); return isFinite(v) ? v : null; }
   function fmt(v) { return String(Number(v.toPrecision(12))); }
 
@@ -205,7 +232,7 @@ var LENSIO = (function () {
     var surfs = [], cur = null, i, j;
     var ftyp = null, xfln = [], yfln = [], vdx = [], vdy = [], vcx = [], vcy = [];
     var waves = [], pwav = 1, fnum = null, fnumType = 0, enpd = null, unit = 'MM';
-    var mnum = 0, ltt = {}, mce = [], raim = null;
+    var mnum = 0, ltt = {}, mce = [], raim = null, gcat = [];
 
     for (i = 0; i < lines.length; i++) {
       var raw = lines[i];
@@ -242,7 +269,9 @@ var LENSIO = (function () {
           // 目录牌号（标志 0 / 4）：留下文件记的 nd / νd，牌号查不到时兜底（见 setGlassCheck）
           if ((mFlag === 0 || mFlag === 4) && isFinite(mNd) && mNd > 1 && isFinite(mVd) && mVd > 0)
             cur.glasNV = { name: tk[1], nd: mNd, vd: mVd, dp: isFinite(mDp) ? mDp : 0,
-                           dN: mFlag === 4 ? (num(tk[10]) || 0) : 0, dV: mFlag === 4 ? (num(tk[11]) || 0) : 0 };
+                           dN: mFlag === 4 ? (num(tk[10]) || 0) : 0, dV: mFlag === 4 ? (num(tk[11]) || 0) : 0,
+                           // 行尾可能写了这块玻璃的目录（`… OHARA_2021-04`），Zemax 认它优先于 GCAT
+                           cat: tk.length > 12 && !isFinite(+tk[tk.length - 1]) ? tk[tk.length - 1] : '' };
           continue;
         }
         if (k === 'CONI') { cur.coni = num(tk[1]); continue; }
@@ -260,6 +289,7 @@ var LENSIO = (function () {
       }
       if (k === 'MODE' && (tk[1] || '').toUpperCase() !== 'SEQ') out.warn.push('这是非序列 (' + tk[1] + ') 文件，只按序列面读取。');
       else if (k === 'NAME') out.title = ln.replace(/^NAME\s*/i, '');
+      else if (k === 'GCAT') gcat = tk.slice(1);
       else if (k === 'UNIT') unit = (tk[1] || 'MM').toUpperCase();
       else if (k === 'FTYP') ftyp = tk.slice(1).map(num);
       else if (k === 'FNUM') { fnum = num(tk[1]); fnumType = tk.length > 2 ? (parseInt(tk[2], 10) || 0) : 0; }
@@ -304,6 +334,41 @@ var LENSIO = (function () {
         out.warn.push('第 ' + i + ' 面的牌号 ' + gv.name + ' 不在内置玻璃库里（多半是已停产的老牌号），改用文件 GLAS 行自己记的 nd ' +
           gnd.toFixed(5) + ' / νd ' + gvd.toFixed(3) + (gv.dp ? ' / ΔPg,F ' + gv.dp : '') +
           (gv.dN || gv.dV ? '（已含偏移解 Δnd ' + gv.dN + ' / Δνd ' + gv.dV + '）' : '') + ' 当模型玻璃。不这样做这片会被当成空气。');
+      }
+      // 牌号查得到，但和文件记的 nd / νd 对不上：多半是同名玻璃取错了目录，按 GCAT 顺序换一家对得上的
+      else if (glassKnown && s.glasNV) {
+        var gk = glassKnown(s.glasNV.name);
+        if (gk && typeof gk === 'object' && !glassMatch(gk, s.glasNV)) {
+          var gcs = s.glasNV.cat ? [s.glasNV.cat].concat(gcat) : gcat, alt = pickCatalog(s.glasNV, gcs);
+          if (alt) {
+            r.mat = alt.name + (r.mat.indexOf('~') > 0 ? r.mat.slice(r.mat.indexOf('~')) : '');
+            out.warn.push('第 ' + i + ' 面的 ' + s.glasNV.name + ' 内置库默认取的是 ' + gk.cat + ' 那块（nd ' + gk.nd.toFixed(5) + ' / νd ' + gk.vd.toFixed(2) +
+              '），和文件记的 ' + s.glasNV.nd.toFixed(5) + ' / ' + s.glasNV.vd.toFixed(2) + ' 对不上；按文件 GCAT 的目录顺序改用 ' + alt.name + '（' +
+              alt.g.nd.toFixed(5) + ' / ' + alt.g.vd.toFixed(2) + '），和 Zemax 用的是同一块。');
+          }
+          /* 哪家目录都对不上：Zemax 对目录玻璃只认目录、不看 GLAS 行存的 nd / νd（那两个数可能是旧的，
+             也可能是占位的 1.5 / 40），所以先按 GCAT 顺序找内置库里有的那家目录，有就用它。
+             GCAT 列的目录内置库里都没有这块玻璃，而且和默认取到的差得远，才是同名不同玻璃：
+             内置库只有 CHINA 的 LAK12（nd 1.697），Zemax 用的是 NIKON-HIKARI 的 LAK12（nd 1.678）。差 0.02 的
+             折射率足以把整只镜头离焦——尼康 Nikkor-S Auto 50/1.4 曾因此轴上 MTF 只剩 0.01。
+             这时和查不到牌号一样，用文件记的 nd/νd 当模型玻璃。 */
+          else {
+            var gw = s.glasNV, gc = inGcat(gw.name, gcs), tail = r.mat.indexOf('~') > 0 ? r.mat.slice(r.mat.indexOf('~')) : '';
+            var holder = Math.abs(gw.nd - 1.5) < 1e-9 && Math.abs(gw.vd - 40) < 1e-9;
+            if (gc) {
+              if (ckey(gc.g.cat) !== ckey(gk.cat)) {
+                r.mat = gc.name + tail;
+                out.warn.push('第 ' + i + ' 面的 ' + gw.name + ' 内置库默认取 ' + gk.cat + '，文件 GCAT 先列的是 ' + gc.g.cat + '，改用 ' + gc.name + '（和 Zemax 同一块）。');
+              }
+            } else if (!holder && (Math.abs(gk.nd - gw.nd) > 5e-4 || Math.abs(gk.vd - gw.vd) > 0.5)) {
+              var wnd = gw.nd + gw.dN, wvd = gw.vd + gw.dV;
+              r.mat = wnd.toFixed(6) + '/' + wvd.toFixed(4) + (gw.dp ? '/' + gw.dp.toFixed(6) : '');
+              out.warn.push('第 ' + i + ' 面的 ' + gw.name + '：文件 GCAT 列的目录（' + gcs.join(' ') + '）内置库里都没有这块，内置库只有 ' + gk.cat +
+                ' 的同名玻璃（nd ' + gk.nd.toFixed(5) + ' / νd ' + gk.vd.toFixed(2) + '），和文件记的 ' + gw.nd.toFixed(5) + ' / ' + gw.vd.toFixed(2) +
+                ' 是两块不同的玻璃；改用文件记的 nd / νd' + (gw.dN || gw.dV ? '（已含偏移解）' : '') + ' 当模型玻璃。');
+            }
+          }
+        }
       }
       // Zemax 的 FLAP 是「浮动通光」——通光等于该结构下自动算出的半口径，各结构不同。
       // 文件里只存了当前结构那一份，硬套到近摄结构会把光线全挡掉。
