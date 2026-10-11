@@ -3243,11 +3243,9 @@
       var ctx = backend.spotPrepare?await backend.spotPrepare(sys,o):OPT.spotPrepare(sys, o);
       var nD = depths.length, nF = m.fields.length, nL = ctx.lam.length;
       var total = nD * nF * nL + nD * nF, step = 0;
-      var residentFrame=persistent;
-      send({ type: 'prep', pendingLabels:residentFrame,dd:dd,depths: depths.map(function(d){return {role:d.role,D:d.D};}), vigMode: ctx.vigMode, nAp: ctx.nAp, nSur: ctx.nSur,
+      send({ type: 'prep', pendingLabels:persistent,dd:dd,depths: depths.map(function(d){return {role:d.role,D:d.D};}), vigMode: ctx.vigMode, nAp: ctx.nAp, nSur: ctx.nSur,
                          lambdas: ctx.lambdas, R: ctx.R, total: total, engine: engine });
-      if(backend.beginDisplayFrame)backend.beginDisplayFrame(m.px,depths.flatMap(function(_,di){return m.fields.map(function(_,fi){return [di,fi];});}));
-      if(residentFrame){
+      if(persistent){
         for(var di=0;di<nD;di++){
           await backend.spotTraceRow(ctx,di);
           backend.submitStatsRow(ctx,di);
@@ -3288,7 +3286,7 @@
       } catch (error) {
         if (persistent) { backend.dispose(); gpuPromise = null; gpuReady = false; }
         throw error;
-      } finally { if (!persistent && backend.dispose) backend.dispose(); }
+      }
     }
     self.onmessage = function (e) {
       run(e).catch(function (err) { self.postMessage({ type: 'error', message: err.message,seq:e.data.runSeq }); });

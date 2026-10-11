@@ -34,12 +34,11 @@ var SPOTGPU = (function () {
     try {
       const shader = device.createShaderModule({ label: 'Spot optical kernels', code: SPOT_GPU_SOURCE });
       // Keep each difficult aiming dispatch on immutable uniforms. This avoids
-      // carrying task descriptor state through the long Newton/continuation loop.
+      // carrying task descriptor state through the Newton loop.
       const uniformCode = SPOT_GPU_SOURCE
         .replace(/fn generation\(\)->GenParams \{[\s\S]*?return gen;\s*\}/, 'fn generation()->GenParams {return gen;}')
         .replace('fn configuration()->Params { if(taskConfigurationEnabled){return taskConfiguration;}return cfg;}', 'fn configuration()->Params {return cfg;}')
-        .replace('fn surfaceOffset(i:u32)->u32{return offsets[i+select(0u,taskOffsetsStart,taskConfigurationEnabled)];}', 'fn surfaceOffset(i:u32)->u32{return offsets[i];}')
-        .replace('fn aimNodeValue(i:u32)->vec4f{return aimNodes[i+select(0u,taskAimStart,taskConfigurationEnabled)];}', 'fn aimNodeValue(i:u32)->vec4f{return aimNodes[i];}');
+        .replace('fn surfaceOffset(i:u32)->u32{return offsets[i+select(0u,taskOffsetsStart,taskConfigurationEnabled)];}', 'fn surfaceOffset(i:u32)->u32{return offsets[i];}');
       const uniformShader = device.createShaderModule({ label: 'Spot immutable aiming', code: uniformCode });
       // Every compute/render pipeline is compiled here, including display.
       // The page calls create while idle, before the first Generate action.
@@ -64,7 +63,6 @@ var SPOTGPU = (function () {
         buildSystem: preparation.buildSystem,
         defocusDepths: async (...args) => { assertAvailable(); return cache.defocusDepths(...args); },
         spotPrepare: async (...args) => { assertAvailable(); return cache.spotPrepare(...args); },
-        beginDisplayFrame: (...args) => { assertAvailable(); return post.beginFrame(...args); },
         spotTraceRow: async (...args) => { assertAvailable(); await tasks.traceRow(...args); },
         submitStatsRow: (...args) => { assertAvailable(); return post.submitStats(...args); },
         readStatsRow: readStats,

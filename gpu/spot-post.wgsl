@@ -12,7 +12,6 @@ struct PostParams { grid:vec4u, center:vec4f, raster:vec4f, extra:vec4u }
 @group(0) @binding(15) var<storage,read> postColors:array<vec4f>;
 var<workgroup> postA:array<vec4f,256>;
 var<workgroup> postB:array<vec4f,256>;
-var<workgroup> postC:array<vec4f,256>;
 // Chan pairwise merge: mean and centered M2, never large raw moments.
 fn postMoments(a:vec4f,b:vec4f)->vec4f {
   if(a.w==0.0) { return b; } if(b.w==0.0) { return a; }
@@ -25,58 +24,52 @@ fn postMerge(a:vec4f,b:vec4f)->vec4f { return vec4f(max(a.x,b.x),a.yzw+b.yzw); }
 @compute @workgroup_size(256)
 fn reduceSpot(@builtin(local_invocation_index) lane:u32,@builtin(workgroup_id) block:vec3u) {
   let cell=cfg.base+block.x*256u+lane;
-  var a=vec4f(0.0); var b=vec4f(0.0); var c=vec4f(0.0);
+  var a=vec4f(0.0); var b=vec4f(0.0);
   if(cell<cfg.count) {
     let p=results[cell+u32(post.raster.z)];
     if(p.z!=-1.0) { b.y=1.0; }
     if(p.z!=-1.0&&p.z!=-2.0) { b.z=1.0; }
-    if(p.w!=0.0) { b.w=1.0; }
-    if(p.w==1.0) { c.x=1.0; if(p.z==1.0) { c.z=1.0; } }
-    if(p.w==-1.0) { c.y=1.0; }
-    if(p.w==-4.0) { c.w=1.0; }
     if(p.z==1.0) {
       let d=(p.xy-post.center.xy)-post.center.zw;
       let r2=dot(d,d); a=vec4f(d,0.0,1.0); b.x=r2;
     }
   }
-  postA[lane]=a; postB[lane]=b; postC[lane]=c; workgroupBarrier();
+  postA[lane]=a; postB[lane]=b; workgroupBarrier();
   for(var step=128u;step>0u;step>>=1u) {
-    if(lane<step) { postA[lane]=postMoments(postA[lane],postA[lane+step]); postB[lane]=postMerge(postB[lane],postB[lane+step]); postC[lane]+=postC[lane+step]; }
+    if(lane<step) { postA[lane]=postMoments(postA[lane],postA[lane+step]); postB[lane]=postMerge(postB[lane],postB[lane+step]); }
     workgroupBarrier();
   }
   if(lane==0u) {
-    let dest=3u*(post.grid.x+cfg.base/256u+block.x);
-    postPartials[dest]=postA[0]; postPartials[dest+1u]=postB[0]; postPartials[dest+2u]=postC[0];
+    let dest=2u*(post.grid.x+cfg.base/256u+block.x);
+    postPartials[dest]=postA[0]; postPartials[dest+1u]=postB[0];
   }
 }
 @compute @workgroup_size(64)
 fn finishSpotStats(@builtin(local_invocation_index) lane:u32,@builtin(workgroup_id) block:vec3u) {
   let field=block.x;
-  var a=vec4f(0.0); var b=vec4f(0.0); var c=vec4f(0.0);
+  var a=vec4f(0.0); var b=vec4f(0.0);
   let groups=post.grid.y; let count=groups*post.grid.z;
   for(var item=lane;item<count;item+=64u) {
-    let offset=3u*(field*count+item); let wavelength=item/groups;
+    let offset=2u*(field*count+item); let wavelength=item/groups;
     if(wavelength==post.grid.w) { a=postMoments(a,postPartials[offset]); b.y+=postPartials[offset+1u].y; }
-    let v=postPartials[offset+1u]; b.x=max(b.x,v.x); b.z+=v.z; b.w+=v.w;
-    c+=postPartials[offset+2u];
+    let v=postPartials[offset+1u]; b.x=max(b.x,v.x); b.z+=v.z;
   }
-  postA[lane]=a; postB[lane]=b; postC[lane]=c; workgroupBarrier();
+  postA[lane]=a; postB[lane]=b; workgroupBarrier();
   for(var step=32u;step>0u;step>>=1u) {
-    if(lane<step) { postA[lane]=postMoments(postA[lane],postA[lane+step]); postB[lane]=postMerge(postB[lane],postB[lane+step]); postC[lane]+=postC[lane+step]; }
+    if(lane<step) { postA[lane]=postMoments(postA[lane],postA[lane+step]); postB[lane]=postMerge(postB[lane],postB[lane+step]); }
     workgroupBarrier();
   }
   if(lane==0u) {
-    let sum=postA[0]; let counts=postB[0]; let aims=postC[0];
+    let sum=postA[0]; let counts=postB[0];
     var rms=0.0; var throughput=0.0;
     if(sum.w>0.0) { rms=1000.0*sqrt(max(0.0,sum.z/sum.w)); throughput=min(1.0,sum.w/max(1.0,counts.y)); }
-    postStats[field*3u]=vec4f(2000.0*sqrt(counts.x),rms,throughput,sum.w);
-    postStats[field*3u+1u]=vec4f(counts.y,counts.zw,aims.z);
-    postStats[field*3u+2u]=vec4f(aims.xy,aims.w,counts.w-aims.x-aims.y-aims.w);
+    postStats[field*2u]=vec4f(2000.0*sqrt(counts.x),rms,throughput,sum.w);
+    postStats[field*2u+1u]=vec4f(counts.yz,0.0,0.0);
   }
 }
 fn postHalf()->f32 {
-  var diameter=postStats[post.extra.x*3u].x;
-  if(post.extra.w==0u) { for(var field=0u;field<post.extra.y;field++) { diameter=max(diameter,postStats[field*3u].x); } }
+  var diameter=postStats[post.extra.x*2u].x;
+  if(post.extra.w==0u) { for(var field=0u;field<post.extra.y;field++) { diameter=max(diameter,postStats[field*2u].x); } }
   return max(diameter*(1.12/2000.0),0.004);
 }
 @compute @workgroup_size(256)

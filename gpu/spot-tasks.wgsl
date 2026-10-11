@@ -35,7 +35,7 @@ fn generateOpticalTasks(@builtin(global_invocation_id) gid:vec3u) {
   var q = sample.uv * (generation().geometry.w * 0.5 * 0.9995);
   if((generation().grid.z & 2u) != 0u) {
     let guess = pupilGuess(sample.uv);
-    if(guess.quality == 2u) {
+    if(guess.ok) {
       q = guess.q;
     } else {
       generatedRays[out] = GeneratedRay(vec4f(sample.uv, 0.0, 0.0), vec4f(0.0, 0.0, 0.0, 2.0));
@@ -96,13 +96,12 @@ fn aimOpticalUniformQueue(@builtin(global_invocation_id) gid:vec3u) {
   let out = cfg.base + cell;
   if(generatedRays[out].v.w != 2.0) { return; }
   let uv = generatedRays[out].p.xy;
-  generatedRays[out].v.w = -9.0;
   let solution = aimGenerated(uv);
   if(solution.ok) {
     let ray = launchGenerated(solution.q);
-    generatedRays[out] = GeneratedRay(vec4f(ray.p, ray.t0), vec4f(ray.v, 3.0));
+    generatedRays[out] = GeneratedRay(vec4f(ray.p, ray.t0), vec4f(ray.v, 1.0));
   } else {
-    generatedRays[out].v.w = -3.0;
+    generatedRays[out].v.w = 0.0;
   }
 }
 
@@ -120,17 +119,15 @@ fn traceOpticalTasks(@builtin(global_invocation_id) gid:vec3u) {
     results[out] = vec4f(0.0, 0.0, status, 0.0);
     return;
   }
-  let aimed = select(select(select(select(0.0, 1.0, status == 3.0), -1.0, status == -3.0),
-    -2.0, status == 2.0 || status == 0.0), -4.0, status == -9.0);
-  if(status != 1.0 && status != 3.0) {
-    results[out] = vec4f(0.0, 0.0, 0.0, aimed);
+  if(status != 1.0) {
+    results[out] = vec4f(0.0);
     return;
   }
   let traced = traceOptics(ray.p.xyz, ray.v.xyz, ray.p.w, configuration().ns, true);
   if(traced.ok && abs(traced.v.z) >= 1e-12) {
     let xy = fma(vec2f((configuration().zImg - traced.p.z) / traced.v.z), traced.v.xy, traced.p.xy);
-    results[out] = vec4f(xy, select(0.0, 1.0, finite(xy.x) && finite(xy.y)), aimed);
+    results[out] = vec4f(xy, select(0.0, 1.0, finite(xy.x) && finite(xy.y)), 0.0);
   } else {
-    results[out] = vec4f(0.0, 0.0, 0.0, aimed);
+    results[out] = vec4f(0.0);
   }
 }

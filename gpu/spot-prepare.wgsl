@@ -145,10 +145,10 @@ fn prepareFitTable() {
     }
   }
 }
-fn preparePupil(uv:vec2f,withTable:bool)->AimResult {
+fn preparePupil(uv:vec2f)->AimResult {
   if((generation().grid.z&2u)==0u) { return AimResult(uv*(generation().geometry.w*0.5*0.9995),true); }
-  var guess=AimGuess(vec2f(0.0),0u);
-  if(withTable) { guess=pupilGuess(uv); if(guess.quality==2u) { return AimResult(guess.q,true); } }
+  let guess=pupilGuess(uv);
+  if(guess.ok) { return guess; }
   return aimGenerated(uv);
 }
 fn prepareImage(q:vec2f)->AimResult {
@@ -161,30 +161,29 @@ fn prepareImage(q:vec2f)->AimResult {
 fn prepareAxialSamples(@builtin(global_invocation_id) gid:vec3u) {
   let i=gid.x; if(i>=prep.control.y) { return; }
   beginPreparation(true); usePreparedTable();
-  let u=(f32(i)+0.5)/f32(prep.control.y); let q=preparePupil(vec2f(u,0.0),true);
+  let u=(f32(i)+0.5)/f32(prep.control.y); let q=preparePupil(vec2f(u,0.0));
   var image=AimResult(vec2f(0.0),false); if(q.ok) { image=prepareImage(q.q); }
   prepScratch[640u+prep.control.w*prep.control.y+i]=vec4f(abs(image.q.x),select(0.0,1.0,image.ok),0.0,0.0);
 }
 
 // One workgroup reduces an axial probe. Max is order-independent for the
-// finite, nonnegative accepted radii; integer counts stay exact (<= 49152).
+// finite, nonnegative accepted radii.
 // The same samples, acceptance predicate and final multiplication are used.
 var<workgroup> axialRadiusMax:array<f32,64>;
-var<workgroup> axialValidCount:array<u32,64>;
 @compute @workgroup_size(PREP_GROUP_SIZE)
 fn prepareBlurReduceParallel(@builtin(local_invocation_id) local:vec3u) {
-  let lane=local.x;var best=0.0;var count=0u;
+  let lane=local.x;var best=0.0;
   for(var i=lane;i<3u*prep.control.y;i+=64u) {
     let sample=prepScratch[640u+i];
-    if(sample.y!=0.0){best=max(best,sample.x);count+=1u;}
+    if(sample.y!=0.0){best=max(best,sample.x);}
   }
-  axialRadiusMax[lane]=best;axialValidCount[lane]=count;
+  axialRadiusMax[lane]=best;
   workgroupBarrier();
   for(var stride=32u;stride>0u;stride>>=1u){
-    if(lane<stride){axialRadiusMax[lane]=max(axialRadiusMax[lane],axialRadiusMax[lane+stride]);axialValidCount[lane]+=axialValidCount[lane+stride];}
+    if(lane<stride){axialRadiusMax[lane]=max(axialRadiusMax[lane],axialRadiusMax[lane+stride]);}
     workgroupBarrier();
   }
-  if(lane==0u){prepMeta[7]=vec4f(2000.0*axialRadiusMax[0],f32(axialValidCount[0]),f32(3u*prep.control.y),0.0);}
+  if(lane==0u){prepMeta[7]=vec4f(2000.0*axialRadiusMax[0],0.0,0.0,0.0);}
 }
 
 // Bounded depth search controller. CPU submits a fixed set of optical stages;
@@ -193,7 +192,7 @@ fn prepareBlurReduceParallel(@builtin(local_invocation_id) local:vec3u) {
 // 2/3 back/front final results=(inverse distance,blur,reached,exists),
 // 4/5 brackets=(lo delta,lo blur,hi delta,hi blur),
 // 6/7 work=(chosen delta,done,active,0), 9/10 current trials,
-// 16+ coarse measurements=(inverse distance,blur,valid,total).
+// 16+ coarse measurements=(inverse distance,blur,reserved,reserved).
 struct DepthSearchControl { record:u32, backStart:u32, backCount:u32, frontStart:u32, frontCount:u32, reserved:u32, padding:vec2u }
 struct DepthNearConstants { optical:vec4f, aperture:vec4f, geometry:vec4f }
 @group(2) @binding(15) var<storage,read_write> depthSearchState:array<vec4f>;
@@ -236,8 +235,6 @@ fn collectDepthBlur() {
   let i=depthSearchControl.record;
   if(depthSearchControl.padding.x!=0u&&depthSearchState[i].z==0.0){return;}
   depthSearchState[i].y=prepMeta[7].x;
-  // Keep reached/exists for final records; candidate slots retain coverage.
-  if(i>=16u){depthSearchState[i]=vec4f(depthSearchState[i].xy,prepMeta[7].yz);}
 }
 fn depthSideSign(side:u32)->f32{return select(-1.0,1.0,side==1u);}
 fn depthSideStart(side:u32)->u32{return select(depthSearchControl.backStart,depthSearchControl.frontStart,side==1u);}

@@ -51,7 +51,7 @@ var SPOTTASK = (function () {
 
     function makeBuffer(key, size, usage) {
       const category = key.startsWith('results-') ? 'points' : 'scratch';
-      const b = device.createBuffer({size, usage, label: 'Spot tasks ' + key, category});
+      const b = device.createBuffer({size, usage, label: 'Spot tasks ' + key});
       records.set(b, {key, buffer: b, category, rows: new Set(), used: ++useSerial});
       if (category === 'scratch') scratchBytes += size;
       return b;
@@ -188,13 +188,12 @@ var SPOTTASK = (function () {
       selected.forEach((task, ti) => {
         const {fi, li, field, lam} = task, table = field.tab;
         // Every bilinear cell uses four of these 9 x 24 nodes. A complete
-        // table always yields quality=2, so generation cannot enqueue aiming.
+        // table always interpolates successfully, so generation cannot enqueue aiming.
         // Match the truth test used to pack each node's valid flag.
         task.needsAim = !!s.aiming && !(table && table.ok.length === 216 && table.ok.every(Boolean));
         const offsetBase = geometryEntries.has(lam) ? geometryEntries.get(lam) : offsets.length;
         const nodeBase = tableEntries.has(fi) ? tableEntries.get(fi) : nodes.length / 4;
         task.offsetBase = offsetBase;
-        task.nodeBase = nodeBase;
         if (!geometryEntries.has(lam)) {
           geometryEntries.set(lam, offsetBase);
           s.surfaces.forEach((surface, i) => {
@@ -383,7 +382,6 @@ var SPOTTASK = (function () {
             const config = buffer('reduce-cfg-shared-' + ti, 32, U.UNIFORM | U.COPY_DST, cfg);
             post.reduce(ctx, di, task.fi, task.li, encoder,
               {buffer: output, offset: ti * cap}, config, {first: 0, count: cap});
-            task.field.grids[task.li] = {gpu: true};
           });
           flush();
         }

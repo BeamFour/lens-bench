@@ -23,7 +23,6 @@ fn generation()->GenParams {
 }
 struct LaunchRay { p:vec3f, v:vec3f, t0:f32 }
 struct AimResult { q:vec2f, ok:bool }
-struct AimGuess { q:vec2f, quality:u32 } // 0 unavailable, 1 partial-cell seed, 2 full interpolation
 
 fn mulberryAt(index:u32)->u32 {
   let state=generation().grid.y+0x6D2B79F5u*(index+1u);
@@ -91,21 +90,17 @@ fn launchGenerated(q:vec2f)->LaunchRay {
   return LaunchRay(o,vec3f(0.0,sn,cs),(generation().geometry.x-zep)/cs);
 }
 fn stopHit(q:vec2f)->AimResult {
-
-
   let ray=launchGenerated(q);
   let t=traceOptics(ray.p,ray.v,ray.t0,min(generation().grid.w+1u,cfg.ns),false);
   let valid=t.ok&&finite(t.p.x)&&finite(t.p.y);
-
-
   return AimResult(t.p.xy,valid);
 }
 fn affinePupil(uv:vec2f)->vec2f {
   return vec2f(fma(generation().affineX.y,uv.x,fma(generation().affineX.z,uv.y,generation().affineX.x)),
                fma(generation().affineY.y,uv.x,fma(generation().affineY.z,uv.y,generation().affineY.x)));
 }
-fn pupilGuess(uv:vec2f)->AimGuess {
-  if((generation().grid.z&1u)==0u) { return AimGuess(vec2f(0.0),0u); }
+fn pupilGuess(uv:vec2f)->AimResult {
+  if((generation().grid.z&1u)==0u) { return AimResult(vec2f(0.0),false); }
   let radius=min(1.0,length(uv));
   // atan2(0,0) is outside WGSL's defined domain. The duplicated centre
   // nodes represent a single point, so its angular coordinate is exactly 0.
@@ -117,16 +112,14 @@ fn pupilGuess(uv:vec2f)->AimGuess {
   let j0=angle%24u; let j1=(j0+1u)%24u;
   let indices=array<u32,4>(ring*24u+j0,ring*24u+j1,(ring+1u)*24u+j0,(ring+1u)*24u+j1);
   let weights=array<f32,4>((1.0-a)*(1.0-b),(1.0-a)*b,a*(1.0-b),a*b);
-  var residual=vec2f(0.0); var weight=0.0; var count=0u;
+  var residual=vec2f(0.0);
   for(var i=0u;i<4u;i++) {
     let node=aimNodes[indices[i]];
-    if(node.z!=0.0) { residual+=weights[i]*node.xy; weight+=weights[i]; count++; }
+    // Only complete cells are interpolated; other cells use ordinary aiming.
+    if(node.z==0.0) { return AimResult(vec2f(0.0),false); }
+    residual+=weights[i]*node.xy;
   }
-  if(count==4u) { return AimGuess(affinePupil(uv)+residual,2u); }
-  // A partial table cell requires the ordinary aiming solver; it is neither
-  // a proven blocked ray nor an already-aimed ray.
-  if(weight>0.0) { return AimGuess(affinePupil(uv)+residual/weight,1u); }
-  return AimGuess(vec2f(0.0),0u);
+  return AimResult(affinePupil(uv)+residual,true);
 }
 fn aimCorrection(j:vec4f,g:vec2f)->AimResult {
   let det=differenceOfProducts(j.x,j.w,j.y,j.z);
