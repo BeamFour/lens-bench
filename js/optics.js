@@ -708,7 +708,8 @@ var OPT = (function () {
       // opt.fno 是像方「工作 F/#」：F/# = 1/(2·|u'|)，u' 与入瞳直径成正比，一步反解
       var yEP = fo.zEP - zObj;                       // 单位斜率光线在入瞳面的高度
       var uT = 1 / (2 * opt.fno);
-      epd = Math.abs(uEnd) > 1e-12 ? 2 * yEP * uT / Math.abs(uEnd) : Math.abs(fo.efl) / opt.fno;
+      // 入瞳在物点前面（虚入瞳，见 startRay）时 yEP < 0，口径取绝对值，否则 EPD 变负
+      epd = Math.abs(uEnd) > 1e-12 ? 2 * Math.abs(yEP) * uT / Math.abs(uEnd) : Math.abs(fo.efl) / opt.fno;
     }
     else epd = Math.abs(fo.efl) / opt.fno;
 
@@ -778,6 +779,11 @@ var OPT = (function () {
       }
       var hO = -Math.tan(th) * dz;
       var dx = ex, dy = ey - hO, L2 = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      /* 入瞳是虚的、而且在物点前面（dz < 0）：微距镜内对焦到最近时会这样——佳能 New FD 200mm F4 Macro 的 MFD
+         结构物距 318.8 mm，近轴入瞳在物面之前。光线是「过物点和入瞳点的那条直线」，照「物点指向入瞳点」取方向
+         就是往回走，整束光线全错（轴上 MTF 0.01，Zemax 0.63）。按 Zemax 的做法沿 +z 取向；直线本身不变，
+         所以视场角 tanθ = −hO/dz 的含义也不变。dz > 0 的镜头一行不走。项目记录 6.30。 */
+      if (dz < 0) L2 = -L2;
       return { P: [0, hO, sys.zObj], D: [dx / L2, dy / L2, dz / L2], pt: true };
     }
     var D = [0, Math.sin(th), Math.cos(th)];
