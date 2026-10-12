@@ -3330,6 +3330,7 @@
     SPOT.workerGeneration++; SPOT.loading=null;
     if (SPOT.worker) { SPOT.worker.terminate(); SPOT.worker = null; }
     SPOT.busy=false;SPOT.backend=null;
+    if ($('spotBackend').dataset.gpuStatus !== 'error') spotGpuStatus('');   // GPU Worker 没了，着色器下次要重编
     $('spotBtn').disabled = false; $('spotStop').disabled = true; $('spotProg').hidden = true;
     if (!keepBadge) $('spotBadge').textContent = SPOT.hasImg ? '已停止 · 有格子没算完' : '已停止';
   }
@@ -3383,7 +3384,7 @@
       w.onerror = function (ev) {
         if (SPOT.worker !== w) return;
         if (SPOT.busy) $('spotBadge').textContent = '计算出错：' + (ev.message || ev);
-        else { $('spotBackend').dataset.gpuStatus='error'; $('spotBackend').title=ev.message || String(ev); }
+        else spotGpuStatus('error', ev.message || String(ev));
         spotStop(true);
       };
       w.onmessage = function (e) { if (SPOT.worker === w) spotOnMsg(e); };
@@ -3396,25 +3397,41 @@
     SPOT.loading={backend:backend,promise:promise};
     return promise;
   }
+  /* 编译状态直接写在下拉项上：Windows 上第一次要等好几分钟，不写出来就像卡死了 */
+  function spotGpuStatus(s, msg) {
+    var sel = $('spotBackend'), o = sel.querySelector('option[value="gpu"]');
+    if (!o || o.disabled) return;
+    sel.dataset.gpuStatus = s;
+    o.textContent = s === 'compiling' ? 'WebGPU（着色器编译中…）' : s === 'error' ? 'WebGPU（出错，悬停看原因）' : 'WebGPU（单精度）';
+    sel.title = s === 'error' && msg ? msg : 'GPU 单精度混合管线；数值对照可选择 JavaScript 双精度';
+  }
   function spotWarmup() {
     if ($('spotBackend').value !== 'gpu' || SPOT.busy) return;
-    $('spotBackend').dataset.gpuStatus='compiling';
     var pending = spotEnsureWorker('gpu'), generation = SPOT.workerGeneration;
+    if ($('spotBackend').dataset.gpuStatus !== 'ready') spotGpuStatus('compiling');
     pending.then(function (w) {
       if (SPOT.worker === w) w.postMessage({cmd:'warmup'});
     }).catch(function (error) {
       if (generation !== SPOT.workerGeneration || SPOT.busy || $('spotBackend').value !== 'gpu') return;
-      $('spotBackend').dataset.gpuStatus='error';
-      $('spotBackend').title=error.message;
+      spotGpuStatus('error', error.message);
     });
   }
-  if (document.readyState === 'complete') setTimeout(spotWarmup,0);
-  else window.addEventListener('load',spotWarmup,{once:true});
+  /* 不在页面加载时预热：Windows 的 D3D 后端编译这套着色器要几分钟（Intel 核显实测 2～5 min，
+     其中 aimOpticalUniformQueue 一条管线就 75 s，而且每次打开页面都要重来），等于让每个访客的后台
+     白烧几分钟 CPU。所以默认用 JavaScript，选了 WebGPU 才开始编译；浏览器没有 WebGPU 时这一项直接禁用。 */
+  (function () {
+    var sel = $('spotBackend'), o = sel.querySelector('option[value="gpu"]');
+    if (!navigator.gpu) {
+      o.disabled = true; o.textContent = 'WebGPU（此浏览器不支持）';
+      if (sel.value === 'gpu') sel.value = 'js';
+      return;
+    }
+    sel.addEventListener('change', spotWarmup);
+  })();
   function spotOnMsg(e) {
     var m = e.data;
     if (m.type === 'warmup-ready' || m.type === 'warmup-error') {
-      $('spotBackend').dataset.gpuStatus=m.type === 'warmup-ready'?'ready':'error';
-      if (m.message) $('spotBackend').title=m.message;
+      spotGpuStatus(m.type === 'warmup-ready' ? 'ready' : 'error', m.message);
       return;
     }
     if(m.seq!==undefined && m.seq!==SPOT.seq){if(m.buf&&typeof m.buf.close==='function')m.buf.close();return;}

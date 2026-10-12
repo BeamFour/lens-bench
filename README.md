@@ -33,6 +33,8 @@ src/          源码（改这里）
   optics.js   计算内核：追迹 / 近轴 / 光瞳 / 衍射 MTF / Layout 几何
   app.js      界面
   glassdb.txt 玻璃库：19 家厂商 3074 种牌号的色散公式
+  spot/       点列图的 WebGPU 后端（模块原样进产物）
+  gpu/        WebGPU 着色器 .wgsl（build.js 拼成 js/spot-webgpu-shader.js / spot-display-shader.js）
 lenses/       镜头库：<id>.json + index.json（由转换脚本生成）
 tools/
   zmx2lens.js 批量转换 .zmx/.seq → lenses/

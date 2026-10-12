@@ -541,7 +541,7 @@ table.data tbody tr:hover{background:var(--panel-2)}
         <label class="fld"><span>目标光斑 <i>µm</i></span><input id="spotUm" type="number" step="50" min="20" value="600"></label>
         <label class="fld"><span>视场点数</span><select id="spotNF"><option value="4">4</option><option value="6" selected>6</option><option value="8">8</option></select></label>
         <label class="fld"><span>每格每波长光线</span><select id="spotN"><option value="20000">2 万</option><option value="50000" selected>5 万</option><option value="100000">10 万</option><option value="300000">30 万</option></select></label>
-        <label class="fld"><span>计算引擎</span><select id="spotBackend" title="GPU 单精度混合管线；数值对照可选择 JavaScript 双精度"><option value="gpu" selected>WebGPU（单精度）</option><option value="js">JavaScript（双精度）</option></select></label>
+        <label class="fld"><span>计算引擎</span><select id="spotBackend" title="GPU 单精度混合管线；数值对照可选择 JavaScript 双精度"><option value="js" selected>JavaScript（双精度）</option><option value="gpu">WebGPU（单精度）</option></select></label>
         <label class="fld"><span>波长</span><select id="spotWl"><option value="all" selected>全部</option><option value="pri">只主波长</option></select></label>
         <label class="fld"><span>每格渲染像素</span><select id="spotPx"><option value="320">320</option><option value="400" selected>400</option><option value="500">500</option></select></label>
         <span class="grow"></span>
@@ -557,7 +557,7 @@ table.data tbody tr:hover{background:var(--panel-2)}
       <p class="note"><b>光斑形状从哪来</b>：瞳面在光阑上分层随机采样，每条光线瞄准光阑；谁把光线挡掉决定了形状。镜头有足够多写死的真实通光（CIR / 固定 DIAM / FLAP，门槛和「一键渐晕」一样：≥4 个面且 ≥20%）就<b>逐面裁剪，猫眼是真的</b>；不够就退回渐晕系数给的等效椭圆瞳，光斑只能是椭圆——用的是哪种写在图下面。400 µm 量级的离焦盘上衍射没有意义，不算。</p>
       <p class="note"><b>读数</b>：D = 全部波长落点离主光线的最大距离 ×2；rms = 主波长落点对自身质心的 RMS；T = 主波长通过率（瞳面均匀采样里通过的比例）。每一行按该行最大光斑取同一比例尺，所以同一行里格子之间的大小可以直接比。亮度映射：能量占 90% 的阈值映到中灰，再往上柔和压到白，离焦盘的亮环和对焦光斑的核心都看得见。</p>
       <p class="note"><b>怎么画的</b>：普通点列图。瞳面分层随机取点，每条光线追到像面点亮一个像素，各波长按颜色叠加，密处到白。颜色按「无渐晕的均匀盘应当是白的」做了白平衡，色边才是真的色差而不是权重偏色。不做衍射。</p>
-      <p class="note"><b>性能</b>：计算在后台 Worker 中进行，逐格出图。默认“WebGPU（单精度）”，页面加载后会后台建立 GPU 设备并编译着色器；如果首次生成时尚未完成，会等待编译。GPU 搜索物距，CPU 双精度建立主光线与瞄准表，GPU 生成光线、重瞄准、追迹、统计及成图，图像先返回，统计标签随后显示。每次点击生成都会重新采样和追迹；GPU 设备、已编译着色器和有效的光学准备数据可复用。停止计算或切换引擎后，GPU 需要重新初始化。JavaScript 选项使用原有单线程双精度计算。格子的显示宽度随卡片调整，“每格渲染像素”决定导出图像的分辨率。修改镜头参数不会自动重新计算 Spot。</p>
+      <p class="note"><b>性能</b>：计算在后台 Worker 中进行，逐格出图。「计算引擎」有两个：<b>JavaScript（双精度）</b>是默认，单线程，5 万条 × 5 波长 × 6 视场 × 2～3 行约 10～20 s；<b>WebGPU（单精度）</b>快一个数量级（同样的设置约 1.5 s），GPU 搜索物距、生成光线、重瞄准、追迹、统计和成图，主光线与瞄准表仍由 CPU 双精度建立，图像先返回、统计标签随后显示。两者读数逐格对过（FE 12-24 GM，12 格的 D / rms / T 全部一致）。<b>选了 WebGPU 才开始编译着色器</b>，下拉项上会显示「编译中」：Mac 上很快，Windows（D3D 后端）第一次可能要好几分钟，编译期间点「生成」会等它。编译好的 GPU 设备、着色器和光学准备数据在本页内复用；停止计算或切换引擎后要重新编译。浏览器不支持 WebGPU 时这一项是灰的。格子的显示宽度随卡片调整，「每格渲染像素」决定画布分辨率。修改镜头参数不会自动重算点列图，右上角会标「已过期」。WebGPU 后端由 <a href="https://github.com/simon300000" target="_blank" rel="noopener">simon300000</a> 贡献（PR #4）。</p>
     </div>
   </section>
 
