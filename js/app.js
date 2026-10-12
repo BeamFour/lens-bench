@@ -3350,10 +3350,14 @@
     $('spotProgBar').style.width = pct.toFixed(1) + '%';
     $('spotProgTxt').textContent = Math.round(pct) + '% · 已追迹 ' + rays.toLocaleString('en-US') + ' 条 · ' + dt.toFixed(1) + ' s';
   }
+  // The GPU Worker includes OPT, so CPU runs can keep its compiled backend alive.
+  function spotWorkerSupports(sourceBackend, backend) {
+    return sourceBackend === backend || sourceBackend === 'gpu';
+  }
   function spotRun() {
     if (!last) return;
     var backendKey=$('spotBackend').value;
-    if(SPOT.busy || (SPOT.worker&&SPOT.backend!==backendKey) || (SPOT.loading&&SPOT.loading.backend!==backendKey))spotStop(true);
+    if(SPOT.busy || (SPOT.worker&&!spotWorkerSupports(SPOT.backend,backendKey)) || (SPOT.loading&&!spotWorkerSupports(SPOT.loading.backend,backendKey)))spotStop(true);
     var st = last.st, nF = +$('spotNF').value, R = +$('spotN').value, px = +$('spotPx').value;
     var um = parseFloat($('spotUm').value); if (!(um > 0)) um = 400;
     var lamIdx = $('spotWl').value === 'pri' ? [last.opt.primary]
@@ -3379,8 +3383,8 @@
     });
   }
   function spotEnsureWorker(backend) {
-    if (SPOT.worker && SPOT.backend === backend) return Promise.resolve(SPOT.worker);
-    if (SPOT.loading && SPOT.loading.backend === backend) return SPOT.loading.promise;
+    if (SPOT.worker && spotWorkerSupports(SPOT.backend, backend)) return Promise.resolve(SPOT.worker);
+    if (SPOT.loading && spotWorkerSupports(SPOT.loading.backend, backend)) return SPOT.loading.promise;
     if (SPOT.worker || SPOT.loading) spotStop(true);
     var generation = SPOT.workerGeneration;
     var promise = spotSource(backend).then(function (src) {
@@ -3468,7 +3472,7 @@
     if (m.type === 'done') {
       var dt = (performance.now() - SPOT.t0) / 1000;
       $('spotBadge').textContent = m.engine + ' · ' + m.rays.toLocaleString('en-US') + ' 条 · ' + dt.toFixed(1) + ' s';
-      if(m.persistent){SPOT.busy=false;$('spotBtn').disabled=false;$('spotStop').disabled=true;$('spotProg').hidden=true;}else spotStop(true);
+      if(m.persistent || SPOT.backend==='gpu'){SPOT.busy=false;$('spotBtn').disabled=false;$('spotStop').disabled=true;$('spotProg').hidden=true;}else spotStop(true);
     }
   }
   function spotRoleName(r) { return r === 'focus' ? '对焦' : r === 'back' ? '焦后' : '焦前'; }

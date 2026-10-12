@@ -19,6 +19,9 @@ var LENSIO = (function () {
   var CATS = ['SCHOTT', 'OHARA', 'HOYA', 'HIKARI', 'CDGM', 'SUMITA', 'NHG', 'NIKON', 'CHINA', 'CORNFR', 'CHANCE',
               'CORNING', 'HERAEUS', 'KODAK', 'MITSUI', 'OSAKA', 'PILKINGTON', 'SPECIAL', 'ZEON'];
   function ckey(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  // 目录版本差（1e-4 量级）的修正范围：'offset' 只修带偏移解的玻璃，'all' 全修，'' 不修。见 parseZmx 里用到它的地方
+  var REVFIX = 'offset';
+  function setRevFix(m) { REVFIX = m; }
   function glassMatch(g, v) { return Math.abs(g.nd - v.nd) <= 2e-5 && Math.abs(g.vd - v.vd) <= 0.02; }
   function pickCatalog(v, gcat) {
     var order = [];
@@ -356,9 +359,21 @@ var LENSIO = (function () {
             var gw = s.glasNV, gc = inGcat(gw.name, gcs), tail = r.mat.indexOf('~') > 0 ? r.mat.slice(r.mat.indexOf('~')) : '';
             var holder = Math.abs(gw.nd - 1.5) < 1e-9 && Math.abs(gw.vd - 40) < 1e-9;
             if (gc) {
+              var gnm = gw.name;
               if (ckey(gc.g.cat) !== ckey(gk.cat)) {
-                r.mat = gc.name + tail;
+                r.mat = gc.name + tail; gnm = gc.name;
                 out.warn.push('第 ' + i + ' 面的 ' + gw.name + ' 内置库默认取 ' + gk.cat + '，文件 GCAT 先列的是 ' + gc.g.cat + '，改用 ' + gc.name + '（和 Zemax 同一块）。');
+              }
+              /* 同一家目录、同一块玻璃，只是目录版本不同（差在 1e-4 量级）：Zemax 用的是它那一版，文件 GLAS 行记的就是那一版的 nd / νd。
+                 偏移解尤其要紧——偏移量是加在 Zemax 那一版上的：佳能 FL-F 300 F5.6 Fluorite 的 HOYA FC1，Zemax 版 nd 1.470787、
+                 内置库 1.470688，偏移 −0.000097 之后两边差 1e-4，萤石复消色差的二级光谱整个变了（轴上 30 lp/mm 0.57 对 0.75）。
+                 做法（项目记录 6.32）：把版本差折进偏移解（色散曲线形状照搬内置库的，nd / νd 挪到 Zemax 那一版）。差得远的不在这里（是旧值 / 占位，见下）。 */
+              var rdN = gw.nd - gc.g.nd, rdV = gw.vd - gc.g.vd;
+              if (REVFIX && !holder && (gw.dN || gw.dV || REVFIX === 'all') && Math.abs(rdN) <= 5e-4 && Math.abs(rdV) <= 1.0 && !glassMatch(gc.g, gw)) {
+                var tN = +(rdN + gw.dN).toPrecision(6), tV = +(rdV + gw.dV).toPrecision(6);
+                r.mat = gc.name + '~' + tN + '~' + tV;
+                out.warn.push('第 ' + i + ' 面的 ' + gw.name + '：文件记的这块（' + gc.g.cat + ' 另一版目录）是 nd ' + gw.nd.toFixed(6) + ' / νd ' + gw.vd.toFixed(3) +
+                  '，内置库是 ' + gc.g.nd.toFixed(6) + ' / ' + gc.g.vd.toFixed(3) + '；版本差折进偏移解，合计 Δnd ' + tN + ' / Δνd ' + tV + '，和 Zemax 同一组折射率。');
               }
             } else if (!holder && (Math.abs(gk.nd - gw.nd) > 5e-4 || Math.abs(gk.vd - gw.vd) > 0.5)) {
               var wnd = gw.nd + gw.dN, wvd = gw.vd + gw.dV;
@@ -664,7 +679,9 @@ var LENSIO = (function () {
     return p.join(' · ');
   }
   function slug(s) {
+    // 带变音符的字母先去掉变音符再转（Voigtländer → voigtlander，不然 ä 会变成连字符）
     return String(s).toLowerCase().replace(/\.(zmx|seq|len|txt)$/i, '')
+      .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ß/g, 'ss')
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'lens';
   }
 
@@ -809,6 +826,6 @@ var LENSIO = (function () {
 
   return { parseSeq: parseSeq, parseZmx: parseZmx, parseAny: parseAny, toLens: toLens,
            fileToLens: fileToLens, decode: decode, rowsToText: rowsToText, slug: slug, wlColor: wlColor,
-           lensSub: lensSub, camCompact: camCompact, WLSETS: WLSETS, WLPRI: WLPRI, setGlassCheck: setGlassCheck };
+           lensSub: lensSub, camCompact: camCompact, WLSETS: WLSETS, WLPRI: WLPRI, setGlassCheck: setGlassCheck, setRevFix: setRevFix };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = LENSIO;
