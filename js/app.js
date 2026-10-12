@@ -616,11 +616,7 @@
     syncSdHints();
     spotStale();
     showMsgs(msgs);
-    // 片数：前一段也是同一种玻璃、中间只隔一个平面（玻璃里的光阑面，如 Hologon 的中央透镜）时算同一片
-    $('surfBadge').textContent = p.surfaces.length + ' 面 · ' + p.surfaces.filter(function (s, i) {
-      var q = p.surfaces[i - 1];
-      return s.isGlass && !(q && q.isGlass && q.matLabel === s.matLabel && s.R === 0);
-    }).length + ' 片';
+    $('surfBadge').textContent = p.surfaces.length + ' 面 · ' + pieceCount(p.surfaces) + ' 片';
     renderStatus();
     renderSpec();
     renderLayout();
@@ -671,6 +667,13 @@
     var q = String(pn).replace(/[\s\/\-]/g, '');
     return 'https://patents.google.com/?q=' + encodeURIComponent('(' + q + ')') + '&oq=' + encodeURIComponent(q);
   }
+  /* 片数：前一段也是同一种玻璃、中间只隔一个平面（玻璃里的光阑面，如 Hologon 的中央透镜）时算同一片 */
+  function pieceCount(S) {
+    return S.filter(function (s, i) {
+      var q = S[i - 1];
+      return s.isGlass && !(q && q.isGlass && q.matLabel === s.matLabel && s.R === 0);
+    }).length;
+  }
   function specTile(k, v, title) {
     return '<span class="it"' + (title ? ' title="' + esc(title) + '"' : '') + '><span class="k">' + k + '</span><span class="v">' + v + '</span></span>';
   }
@@ -706,7 +709,7 @@
         '随变焦移动：' + (camGroupsOf(C, 'zoom') || '—') + '；' + C.groups.map(function (g) { return g.name + ' ' + (g.label || g.zoom + '/' + g.focus); }).join('，')));
     }
     var s2 = last.sys, rows = last.mtf.rows, N = s2.surfaces.length, freqs = last.opt.freqs || [];
-    var oal = s2.zVertex[N - 1], nGlass = s2.surfaces.filter(function (q) { return q.isGlass; }).length;
+    var oal = s2.zVertex[N - 1], nGlass = pieceCount(s2.surfaces);
     var r0 = rows[0], rN = rows[rows.length - 1];
     h.push('<span class="hd">本页 · 按当前状态算</span>');
     h.push(specTile('焦距 · F/#', fmt(s2.efl, 2) + ' mm · F/' + fmt(s2.fno, 2), '主波长近轴焦距；F/# 按顶栏「孔径定义」'));
