@@ -3197,30 +3197,75 @@
      计算放在 Web Worker：把 glassdb + optics 的源码原样取出来塞进一个 Blob worker
      （单文件版从内联 <script> 取文本，静态站用 fetch 读文件），主线程只管色调映射和写字。
      Worker 逐格追迹、逐格铺成辐照度图发回来，进度条按步数走，格子算完一格画一格。 */
-  var SPOT = { worker: null, prep: null, meta: null, t0: 0, seq: 0, hasImg: false };
+  var SPOT = { worker: null, prep: null, meta: null, t0: 0, seq: 0, hasImg: false, busy:false, backend:null, workerGeneration:0, loading:null };
   function spotWorkerMain() {
-    self.onmessage = function (e) {
+    var gpuPromise = null, gpuReady = false;
+    function gpuBackend() {
+      if (!gpuPromise) {
+        gpuPromise = SPOTGPU.create(OPT).then(function (backend) {
+          gpuReady = true;
+          return backend;
+        }).catch(function (error) {
+          gpuPromise = null; gpuReady = false;
+          throw error;
+        });
+      }
+      return gpuPromise;
+    }
+    async function run(e) {
       var m = e.data;
+      function send(data,transfer){data.seq=m.runSeq;self.postMessage(data,transfer);}
+      if (m.cmd === 'warmup') {
+        try {
+          await gpuBackend();
+          self.postMessage({type:'warmup-ready'});
+        } catch (error) {
+          self.postMessage({type:'warmup-error',message:error.message});
+        }
+        return;
+      }
       if (m.cmd !== 'run') return;
+      if (!['js','gpu'].includes(m.backend)) throw new Error('未知 Spot 计算引擎');
+      var backend = OPT, engine = 'JavaScript', persistent = m.backend === 'gpu';
+      send({type:'phase',phase:persistent?(gpuReady?'复用 GPU 计算设备…':'等待 GPU 着色器编译…'):'准备光学系统…'});
+      if (persistent) { backend = await gpuBackend(); engine = 'WebGPU（单精度）'; }
+      try {
+      send({type:'phase',phase:'搜索焦前 / 焦后物距…'});
       var p = OPT.parsePrescription(m.tx);
-      var sys = OPT.buildSystem(p.surfaces, m.opt);
+      var sys = backend.buildSystem?backend.buildSystem(p.surfaces,m.opt):OPT.buildSystem(p.surfaces, m.opt);
       if (m.vig) sys.vig = m.vig;
-      var dd = OPT.defocusDepths(sys, m.opt, m.targetUm);
+      var dd = backend.defocusDepths?await backend.defocusDepths(sys,m.opt,m.targetUm):OPT.defocusDepths(sys, m.opt, m.targetUm);
+      send({type:'phase',phase:'准备瞄准表与主光线…'});
       var depths = [{ D: dd.focus, role: 'focus' }];
       if (dd.back !== undefined) depths.push({ D: dd.back, role: 'back' });
       depths.push({ D: dd.front, role: 'front' });
       var o = Object.assign({}, m.opt, { spotDepths: depths, spotFields: m.fields, spotLambdas: m.lamIdx, spotRays: m.R });
-      var ctx = OPT.spotPrepare(sys, o);
+      var ctx = backend.spotPrepare?await backend.spotPrepare(sys,o):OPT.spotPrepare(sys, o);
       var nD = depths.length, nF = m.fields.length, nL = ctx.lam.length;
       var total = nD * nF * nL + nD * nF, step = 0;
-      self.postMessage({ type: 'prep', dd: dd, depths: depths, vigMode: ctx.vigMode, nAp: ctx.nAp, nSur: ctx.nSur,
-                         lambdas: ctx.lambdas, R: ctx.R, total: total });
+      send({ type: 'prep', pendingLabels:persistent,dd:dd,depths: depths.map(function(d){return {role:d.role,D:d.D};}), vigMode: ctx.vigMode, nAp: ctx.nAp, nSur: ctx.nSur,
+                         lambdas: ctx.lambdas, R: ctx.R, total: total, engine: engine });
+      if(persistent){
+        for(var di=0;di<nD;di++){
+          await backend.spotTraceRow(ctx,di);
+          backend.submitStatsRow(ctx,di);
+          for(var fi=0;fi<nF;fi++){
+            var bitmap=await backend.spotRaster(ctx,di,fi,m.px,m.colors,m.weights);
+            send({type:'panel',di:di,fi:fi,buf:bitmap,stats:null,half:null,step:++step,total:nD*nF,rays:ctx.nRays},[bitmap]);
+          }
+        }
+        for(di=0;di<nD;di++){
+          var stats=await backend.readStatsRow(ctx,di);
+          var actualD=dd[depths[di].role];depths[di].D=actualD;ctx.depths[di].D=actualD;
+          send({type:'labels',di:di,stats:stats,dd:dd,D:actualD,role:depths[di].role});
+        }
+      }else{
       for (var di = 0; di < nD; di++) {
         var stats = [];
         for (var fi = 0; fi < nF; fi++) {
           for (var li = 0; li < nL; li++) {
             OPT.spotTrace(ctx, di, fi, li);
-            self.postMessage({ type: 'progress', step: ++step, total: total, rays: ctx.nRays });
+            send({ type: 'progress', step: ++step, total: total, rays: ctx.nRays });
           }
           stats.push(OPT.spotStats(ctx, di, fi));
         }
@@ -3231,22 +3276,32 @@
         for (fi = 0; fi < nF; fi++) {
           var half = Math.max((depths[di].role === 'focus' ? stats[fi].diam / 2000 : rowHalf) * 1.12, 0.004);
           var buf = OPT.spotRaster(ctx, di, fi, half, m.px, m.colors, m.weights);
-          self.postMessage({ type: 'panel', di: di, fi: fi, half: half, stats: stats[fi], buf: buf,
+          send({ type: 'panel', di: di, fi: fi, half: half, stats: stats[fi], buf: buf,
                              step: ++step, total: total, rays: ctx.nRays }, [buf.buffer]);
           ctx.depths[di].fields[fi].grids = [];              // 铺完就释放
         }
       }
-      self.postMessage({ type: 'done', rays: ctx.nRays });
+      }
+      send({ type: 'done', persistent:persistent,rays:ctx.nRays,engine:engine });
+      } catch (error) {
+        if (persistent) { backend.dispose(); gpuPromise = null; gpuReady = false; }
+        throw error;
+      }
+    }
+    self.onmessage = function (e) {
+      run(e).catch(function (err) { self.postMessage({ type: 'error', message: err.message,seq:e.data.runSeq }); });
     };
   }
   /* Worker 的源码：单文件版直接取内联 <script> 的文本；静态站用 fetch 把 js/ 里的文件读成文本。
      不用 importScripts —— 它对 MIME 类型是严格的，Python 的 http.server 在 Windows 上把 .js
      当 text/plain 发，Worker 就起不来（主页面的 <script src> 宽松，所以页面本身没事）。
      读成文本再塞进 Blob，两种产物走同一条路，跟服务器怎么标 MIME 无关。取过一次就缓存。 */
-  var SPOTSRC = null;
-  function spotSource() {
-    if (SPOTSRC) return SPOTSRC;
-    SPOTSRC = Promise.all(['glassdb', 'optics'].map(function (k) {
+  var SPOTSRC = {};
+  function spotSource(backend) {
+    if (SPOTSRC[backend]) return SPOTSRC[backend];
+    var scripts = ['glassdb', 'optics'];
+    if (backend === 'gpu') scripts.push('spot-gpu-display','spot-display-shader','spot-cache','spot-gpu-post','spot-gpu-tasks','spot-gpu-prepare','spot-webgpu', 'spot-webgpu-shader');
+    SPOTSRC[backend] = Promise.all(scripts.map(function (k) {
       var el = document.getElementById('src-' + k);
       if (!el) return Promise.reject(new Error('页面里没有 src-' + k + ' 脚本（构建产物太旧）'));
       var src = el.getAttribute('src');
@@ -3259,8 +3314,8 @@
       parts.push('(' + spotWorkerMain.toString() + ')();');
       return parts.join('\n');
     });
-    SPOTSRC.catch(function () { SPOTSRC = null; });     // 失败了下次重取
-    return SPOTSRC;
+    SPOTSRC[backend].catch(function () { delete SPOTSRC[backend]; });
+    return SPOTSRC[backend];
   }
   function spotFields(n) {
     var st = last.st, lam = last.opt.lambdas[last.opt.primary].nm / 1000, out = [];
@@ -3271,12 +3326,15 @@
     return out;
   }
   function spotStop(keepBadge) {
+    SPOT.seq++; // Cancel a run still waiting for Worker source / GPU initialization.
+    SPOT.workerGeneration++; SPOT.loading=null;
     if (SPOT.worker) { SPOT.worker.terminate(); SPOT.worker = null; }
+    SPOT.busy=false;SPOT.backend=null;
     $('spotBtn').disabled = false; $('spotStop').disabled = true; $('spotProg').hidden = true;
     if (!keepBadge) $('spotBadge').textContent = SPOT.hasImg ? '已停止 · 有格子没算完' : '已停止';
   }
   function spotStale() {
-    if (SPOT.hasImg && !SPOT.worker) $('spotBadge').textContent = '已过期 · 镜头参数已改';
+    if (SPOT.hasImg && !SPOT.busy) $('spotBadge').textContent = '已过期 · 镜头参数已改';
   }
   function spotProgress(step, total, rays) {
     var dt = (performance.now() - SPOT.t0) / 1000, pct = total ? 100 * step / total : 0;
@@ -3286,7 +3344,8 @@
   }
   function spotRun() {
     if (!last) return;
-    spotStop(true);
+    var backendKey=$('spotBackend').value;
+    if(SPOT.busy || (SPOT.worker&&SPOT.backend!==backendKey) || (SPOT.loading&&SPOT.loading.backend!==backendKey))spotStop(true);
     var st = last.st, nF = +$('spotNF').value, R = +$('spotN').value, px = +$('spotPx').value;
     var um = parseFloat($('spotUm').value); if (!(um > 0)) um = 400;
     var lamIdx = $('spotWl').value === 'pri' ? [last.opt.primary]
@@ -3295,25 +3354,86 @@
                   colors: lamIdx.map(function (i) { return hex2rgb(st.wl[i].c || '#ffffff').map(function (v) { return v / 255; }); }),
                   weights: lamIdx.map(function (i) { return last.opt.lambdas[i].w > 0 ? last.opt.lambdas[i].w : 1; }) };
     SPOT.prep = null; SPOT.hasImg = false; SPOT.t0 = performance.now();
-    $('spotBadge').textContent = '搜索焦前 / 焦后物距…'; $('spotBtn').disabled = true; $('spotStop').disabled = false;
+    SPOT.busy=true;
+    $('spotBadge').textContent = SPOT.worker?'准备计算…':'加载计算模块…'; $('spotBtn').disabled = true; $('spotStop').disabled = false;
     $('spotLegend').innerHTML = '';
-    $('spotProg').hidden = false; $('spotProgBar').style.width = '0%'; $('spotProgTxt').textContent = '搜索焦前 / 焦后物距…';
+    $('spotProg').hidden = false; $('spotProgBar').style.width = '0%'; $('spotProgTxt').textContent = $('spotBadge').textContent;
     var run = ++SPOT.seq;
-    var msg = { cmd: 'run', tx: st.tx, opt: last.opt, vig: last.sys.vig || null, targetUm: um, fields: SPOT.meta.fields,
-                lamIdx: lamIdx, R: R, px: px, colors: SPOT.meta.colors, weights: SPOT.meta.weights };
-    spotSource().then(function (src) {
-      if (run !== SPOT.seq) return;                    // 等源码期间又按了一次
-      var w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
-      w.onerror = function (ev) { $('spotBadge').textContent = '计算出错：' + (ev.message || ev); spotStop(true); };
-      w.onmessage = spotOnMsg;
-      SPOT.worker = w;
+    var msg = { cmd: 'run', backend: $('spotBackend').value, tx: st.tx, opt: last.opt, vig: last.sys.vig || null, targetUm: um, fields: SPOT.meta.fields,
+                runSeq:run,lamIdx: lamIdx, R: R, px: px, colors: SPOT.meta.colors, weights: SPOT.meta.weights };
+    if(SPOT.worker){SPOT.worker.postMessage(msg);return;}
+    spotEnsureWorker(msg.backend).then(function (w) {
+      if (run !== SPOT.seq) return;
       w.postMessage(msg);
-    }, function (err) { $('spotBadge').textContent = '无法启动 Worker：' + err.message; spotStop(true); });
+    }).catch(function (err) {
+      if (run !== SPOT.seq) return;
+      $('spotBadge').textContent = '无法启动 Worker：' + err.message; spotStop(true);
+    });
   }
+  function spotEnsureWorker(backend) {
+    if (SPOT.worker && SPOT.backend === backend) return Promise.resolve(SPOT.worker);
+    if (SPOT.loading && SPOT.loading.backend === backend) return SPOT.loading.promise;
+    if (SPOT.worker || SPOT.loading) spotStop(true);
+    var generation = SPOT.workerGeneration;
+    var promise = spotSource(backend).then(function (src) {
+      if (generation !== SPOT.workerGeneration) throw new Error('计算已取消');
+      var workerUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      var w;
+      try { w = new Worker(workerUrl); } finally { URL.revokeObjectURL(workerUrl); }
+      w.onerror = function (ev) {
+        if (SPOT.worker !== w) return;
+        if (SPOT.busy) $('spotBadge').textContent = '计算出错：' + (ev.message || ev);
+        else { $('spotBackend').dataset.gpuStatus='error'; $('spotBackend').title=ev.message || String(ev); }
+        spotStop(true);
+      };
+      w.onmessage = function (e) { if (SPOT.worker === w) spotOnMsg(e); };
+      SPOT.worker=w; SPOT.backend=backend; SPOT.loading=null;
+      return w;
+    }).catch(function (error) {
+      if (generation === SPOT.workerGeneration) SPOT.loading=null;
+      throw error;
+    });
+    SPOT.loading={backend:backend,promise:promise};
+    return promise;
+  }
+  function spotWarmup() {
+    if ($('spotBackend').value !== 'gpu' || SPOT.busy) return;
+    $('spotBackend').dataset.gpuStatus='compiling';
+    var pending = spotEnsureWorker('gpu'), generation = SPOT.workerGeneration;
+    pending.then(function (w) {
+      if (SPOT.worker === w) w.postMessage({cmd:'warmup'});
+    }).catch(function (error) {
+      if (generation !== SPOT.workerGeneration || SPOT.busy || $('spotBackend').value !== 'gpu') return;
+      $('spotBackend').dataset.gpuStatus='error';
+      $('spotBackend').title=error.message;
+    });
+  }
+  if (document.readyState === 'complete') setTimeout(spotWarmup,0);
+  else window.addEventListener('load',spotWarmup,{once:true});
   function spotOnMsg(e) {
     var m = e.data;
+    if (m.type === 'warmup-ready' || m.type === 'warmup-error') {
+      $('spotBackend').dataset.gpuStatus=m.type === 'warmup-ready'?'ready':'error';
+      if (m.message) $('spotBackend').title=m.message;
+      return;
+    }
+    if(m.seq!==undefined && m.seq!==SPOT.seq){if(m.buf&&typeof m.buf.close==='function')m.buf.close();return;}
+    if(m.type==='phase'){$('spotBadge').textContent=m.phase;$('spotProgTxt').textContent=m.phase;return;}
+    if (m.type === 'error') { $('spotBadge').textContent = '计算出错：' + m.message; spotStop(true); return; }
     if (m.type === 'prep') { SPOT.prep = m; spotBuildGrid(); spotProgress(0, m.total, 0); $('spotBadge').textContent = '追迹中…'; return; }
     if (m.type === 'progress') { spotProgress(m.step, m.total, m.rays); return; }
+    if(m.type==='labels'){
+      if(!SPOT.prep||!SPOT.prep.depths[m.di])return;
+      SPOT.prep.dd=m.dd;SPOT.prep.depths[m.di].D=m.D;
+      var rowLabel=$('spotGrid').querySelectorAll('.spotlbl')[m.di];var um=m.dd[m.role+'Um'];
+      rowLabel.innerHTML='<b>'+spotRoleName(m.role)+'</b><i>'+(Number.isFinite(m.D)?Math.round(m.D).toLocaleString('en-US')+' mm':'∞')+'</i><span>轴上 '+Math.round(um||0)+' µm</span>';
+      spotUpdateReachLegend(m.dd);
+      m.stats.forEach(function(st,fi){
+        var cv=$('spotC'+m.di+'_'+fi);
+        if(cv)spotPaintLabels(cv,st,st.half,fi/(SPOT.meta.fields.length-1));
+      });
+      return;
+    }
     if (m.type === 'panel') {
       var nF = SPOT.meta.fields.length;
       spotPanel($('spotC' + m.di + '_' + m.fi), m.buf, m.stats, m.half, m.fi / (nF - 1));
@@ -3323,11 +3443,13 @@
     }
     if (m.type === 'done') {
       var dt = (performance.now() - SPOT.t0) / 1000;
-      $('spotBadge').textContent = m.rays.toLocaleString('en-US') + ' 条 · ' + dt.toFixed(1) + ' s';
-      spotStop(true);
+      $('spotBadge').textContent = m.engine + ' · ' + m.rays.toLocaleString('en-US') + ' 条 · ' + dt.toFixed(1) + ' s';
+      if(m.persistent){SPOT.busy=false;$('spotBtn').disabled=false;$('spotStop').disabled=true;$('spotProg').hidden=true;}else spotStop(true);
     }
   }
   function spotRoleName(r) { return r === 'focus' ? '对焦' : r === 'back' ? '焦后' : '焦前'; }
+  function spotReachWarnings(dd){var reach=[];if(dd.backReached===false)reach.push('焦后到无限远也只有 '+Math.round(dd.backUm)+' µm');if(dd.frontReached===false)reach.push('焦前到最近可算物距也只有 '+Math.round(dd.frontUm)+' µm');return reach;}
+  function spotUpdateReachLegend(dd){var el=$('spotReachLegend');if(!el)return;var reach=spotReachWarnings(dd);el.textContent=reach.join('；');el.hidden=!reach.length;}
   function spotBuildGrid() {
     var P = SPOT.prep, M = SPOT.meta, g = $('spotGrid'), nF = M.fields.length;
     $('spotEmpty').hidden = true;
@@ -3336,7 +3458,7 @@
     var html = '';
     P.depths.forEach(function (d, di) {
       var um = d.role === 'focus' ? P.dd.focusUm : d.role === 'back' ? P.dd.backUm : P.dd.frontUm;
-      html += '<div class="spotlbl"><b>' + spotRoleName(d.role) + '</b><i>' + (isFinite(d.D) ? Math.round(d.D).toLocaleString('en-US') + ' mm' : '∞') + '</i><span>轴上 ' + Math.round(um) + ' µm</span></div>';
+      html += '<div class="spotlbl"><b>' + spotRoleName(d.role) + '</b><i>' + (P.pendingLabels&&d.D===null?'计算中…':isFinite(d.D) ? Math.round(d.D).toLocaleString('en-US') + ' mm' : '∞') + '</i><span>轴上 ' + (P.pendingLabels?'计算中…':Math.round(um)+' µm') + '</span></div>';
       for (var fi = 0; fi < nF; fi++)
         html += '<div class="spotcell"><canvas id="spotC' + di + '_' + fi + '" width="' + M.px + '" height="' + M.px + '"></canvas></div>';
     });
@@ -3348,16 +3470,16 @@
       var c = M.colors[i].map(function (v) { return Math.round(v * 255); });
       return '<span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:rgb(' + c.join(',') + ');vertical-align:-1px;margin-right:4px"></i>' + nm + ' nm</span>';
     }).join('');
-    var reach = [];
-    if (P.dd.backReached === false) reach.push('焦后到无限远也只有 ' + Math.round(P.dd.backUm) + ' µm');
-    if (P.dd.frontReached === false) reach.push('焦前到最近可算物距也只有 ' + Math.round(P.dd.frontUm) + ' µm');
+    var reach = spotReachWarnings(P.dd);
     $('spotLegend').innerHTML = '<span>' + vig + '</span><span>每格每波长 ' + P.R.toLocaleString('en-US') + ' 条 · 目标光斑 ' + M.um + ' µm（轴上外径）</span>' + lam
       + '<span>离焦行整行同一比例尺，对焦行每格自己的（右下角 ±）</span>'
-      + (reach.length ? '<span style="color:var(--warn)">' + reach.join('；') + '</span>' : '');
+      + '<span id="spotReachLegend" style="color:var(--warn)"'+(reach.length?'':' hidden')+'>'+reach.join('；')+'</span>';
   }
   /* 一格：辐照度图 → 能量分位色调映射 → 写字 */
   function spotPanel(cv, acc, st, half, frac) {
     var W = cv.width, ctx = cv.getContext('2d'), n = W * W;
+    if(typeof ImageBitmap!=='undefined'&&acc instanceof ImageBitmap){ctx.drawImage(acc,0,0);acc.close();}
+    else {
     // 点列图的亮度：按非零像素亮度的 99 分位归一，再开 0.6 次方——单个落点也看得见，密处到白。
     var lum = [], i;
     for (i = 0; i < n; i++) { var v = (acc[i * 3] + acc[i * 3 + 1] + acc[i * 3 + 2]) / 3; if (v > 0) lum.push(v); }
@@ -3372,6 +3494,10 @@
       D[i * 4 + 3] = 255;
     }
     ctx.putImageData(img, 0, 0);
+    }
+    if(st)spotPaintLabels(cv,st,half,frac);
+  }
+  function spotPaintLabels(cv,st,half,frac){var W=cv.width,ctx=cv.getContext('2d');
     var fs = Math.round(W / 24);
     ctx.font = fs + 'px "IBM Plex Mono", monospace'; ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.textBaseline = 'top';
     ctx.fillText('F=' + frac.toFixed(1) + ' (' + st.th.toFixed(2) + '°)', fs * 0.6, fs * 0.5);
