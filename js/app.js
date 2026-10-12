@@ -616,7 +616,11 @@
     syncSdHints();
     spotStale();
     showMsgs(msgs);
-    $('surfBadge').textContent = p.surfaces.length + ' 面 · ' + p.surfaces.filter(function (s) { return s.isGlass; }).length + ' 片';
+    // 片数：前一段也是同一种玻璃、中间只隔一个平面（玻璃里的光阑面，如 Hologon 的中央透镜）时算同一片
+    $('surfBadge').textContent = p.surfaces.length + ' 面 · ' + p.surfaces.filter(function (s, i) {
+      var q = p.surfaces[i - 1];
+      return s.isGlass && !(q && q.isGlass && q.matLabel === s.matLabel && s.R === 0);
+    }).length + ' 片';
     renderStatus();
     renderSpec();
     renderLayout();
