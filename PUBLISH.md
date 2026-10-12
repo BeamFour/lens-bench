@@ -16,7 +16,9 @@
 | `js/*`、`data/*` | `dist/web/js`、`dist/web/data` | 原样镜像，下架的镜头会被删掉 |
 | `standalone.html` | `dist/lens-mtf-bench.html` | 单文件版，字体换成内嵌 base64 |
 | `fonts/*.woff2` | 只在站点仓库里有 | 不动 |
+| `fonts/OFL.txt` | `docs/OFL-fonts.txt` | 两套字体的版权声明 + SIL OFL 1.1 全文（OFL 要求随字体附带） |
 | `README.md` | `README.md` | 原样 |
+| `LICENSE` | `LICENSE` | GPL-3.0 原文，一字不改（GitHub 靠它识别协议） |
 | `PUBLISH.md` | `docs/推送方法.md` | 就是本文 |
 
 ## 一条命令推送

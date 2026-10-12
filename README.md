@@ -390,3 +390,22 @@ Zemax 的视场表通常从大到小，转换时会重排成由小到大，渐�
 
 单文件版把所有镜头内联进来，双击就能开，适合发给别人或离线用；
 静态站版本 `fetch` 不认 `file://`，必须挂 http 服务（本地用 `node tools/serve.js`）。
+
+---
+
+## 许可
+
+Copyright (C) 2026 anvcor
+
+本项目（代码与镜头库数据）以 **GNU General Public License v3.0** 发布，全文见 [`LICENSE`](LICENSE)。
+可以自由使用、修改、再发布，包括商用；**再发布修改过的版本时，必须同样以 GPL-3.0 公开源码**，并保留版权声明。
+本项目不附带任何担保。
+
+提交 PR 即表示同意你的贡献按同一协议（GPL-3.0）发布。
+
+不属于本项目版权、按原协议随附的第三方内容：
+
+- **玻璃库**（`src/glassdb.txt` / `js/glassdb.js`）：整理自各玻璃厂商公开的 Zemax 目录（AGF），数据版权归各厂商。
+- **字体**（`fonts/`）：Archivo、IBM Plex Mono，均为 SIL Open Font License 1.1，见 [`fonts/OFL.txt`](fonts/OFL.txt)。
+
+专利仿真镜头的原始处方来自公开专利文献（专利号和实施例号写在每颗镜头的说明里）；GPL 覆盖的是本项目对它们的整理、核对与转换结果。
