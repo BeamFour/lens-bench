@@ -3219,6 +3219,46 @@
       }
       return gpuPromise;
     }
+    /* JavaScript 多线程：本 Worker 只做调度，追迹分给 n 个子 Worker（源码 = glassdb + optics + spotSubMain）。
+       子线程跨次复用，源码或线程数变了才重建；出错就整组丢掉，下次重建，免得旧任务的结果串进新一次。 */
+    var POOL = null;
+    function cpuPool(src, n) {
+      if (POOL && POOL.src === src && POOL.n === n) return POOL;
+      cpuPoolDrop();
+      var url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), ws = [];
+      try { for (var i = 0; i < n; i++) ws.push(new Worker(url)); } finally { URL.revokeObjectURL(url); }
+      return (POOL = { src: src, n: n, ws: ws });
+    }
+    function cpuPoolDrop() {
+      if (POOL) POOL.ws.forEach(function (w) { w.terminate(); });
+      POOL = null;
+    }
+    // 任务按行、视场、波长的顺序排队，谁空了谁领下一格；回来的结果带 run 号，不是这一次的就丢掉
+    function cpuTrace(pool, job, tasks, onResult) {
+      return new Promise(function (resolve, reject) {
+        var next = 0, left = tasks.length, failed = false;
+        if (!left) { resolve(); return; }
+        function feed(w) {
+          if (next >= tasks.length) return;
+          var t = tasks[next++];
+          w.postMessage(Object.assign({ di: t[0], fi: t[1], li: t[2] }, job));
+        }
+        pool.ws.forEach(function (w) {
+          w.onmessage = function (e) {
+            var r = e.data;
+            if (failed || r.run !== job.run) return;
+            if (r.error) { failed = true; reject(new Error('CPU 子线程：' + r.error)); return; }
+            onResult(r);
+            if (--left === 0) resolve(); else feed(w);
+          };
+          w.onerror = function (ev) {
+            if (ev.preventDefault) ev.preventDefault();
+            if (!failed) { failed = true; reject(new Error('CPU 子线程出错：' + (ev.message || ev))); }
+          };
+          feed(w);
+        });
+      });
+    }
     async function run(e) {
       var m = e.data;
       function send(data,transfer){data.seq=m.runSeq;self.postMessage(data,transfer);}
@@ -3267,15 +3307,10 @@
           send({type:'labels',di:di,stats:stats,dd:dd,D:actualD,role:depths[di].role});
         }
       }else{
-      for (var di = 0; di < nD; di++) {
+      // 一行（同一物距）的格子全部追完 → 统计 → 定比例尺 → 铺图。多线程时各行完成的先后不定，按行各自收尾。
+      var finishRow = function (di) {
         var stats = [];
-        for (var fi = 0; fi < nF; fi++) {
-          for (var li = 0; li < nL; li++) {
-            OPT.spotTrace(ctx, di, fi, li);
-            send({ type: 'progress', step: ++step, total: total, rays: ctx.nRays });
-          }
-          stats.push(OPT.spotStats(ctx, di, fi));
-        }
+        for (var fi = 0; fi < nF; fi++) stats.push(OPT.spotStats(ctx, di, fi));
         // 比例尺：离焦行整行共用（按该行最大光斑，格子之间大小可比）；
         // 对焦行每格自己的——像差光斑大小差好几倍，共用的话轴上那格就是一个点
         var rowHalf = 0;
@@ -3286,6 +3321,29 @@
           send({ type: 'panel', di: di, fi: fi, half: half, stats: stats[fi], buf: buf,
                              step: ++step, total: total, rays: ctx.nRays }, [buf.buffer]);
           ctx.depths[di].fields[fi].grids = [];              // 铺完就释放
+        }
+      };
+      var pool = m.threads > 1 && m.subSrc && typeof Worker !== 'undefined' ? cpuPool(m.subSrc, m.threads) : null;
+      if (pool) {
+        // 每格（物距 × 视场 × 波长）的随机种子只跟格子编号有关，分给哪个线程、谁先算完都不影响结果——和单线程逐位相同
+        engine = 'JavaScript ×' + pool.n + ' 线程';
+        var tasks = [], left = [];
+        for (var di = 0; di < nD; di++) { left.push(nF * nL); for (var fi = 0; fi < nF; fi++) for (var li = 0; li < nL; li++) tasks.push([di, fi, li]); }
+        try {
+          await cpuTrace(pool, { run: m.runSeq, tx: m.tx, opt: m.opt, vig: m.vig || null, o: o }, tasks, function (r) {
+            ctx.depths[r.di].fields[r.fi].grids[r.li] = { xs: r.xs, ys: r.ys, n: r.n, nIn: r.nIn };
+            ctx.nRays += r.rays;
+            send({ type: 'progress', step: ++step, total: total, rays: ctx.nRays });
+            if (--left[r.di] === 0) finishRow(r.di);
+          });
+        } catch (error) { cpuPoolDrop(); throw error; }
+      } else {
+        for (var di = 0; di < nD; di++) {
+          for (var fi = 0; fi < nF; fi++) for (var li = 0; li < nL; li++) {
+            OPT.spotTrace(ctx, di, fi, li);
+            send({ type: 'progress', step: ++step, total: total, rays: ctx.nRays });
+          }
+          finishRow(di);
         }
       }
       }
@@ -3299,6 +3357,29 @@
       run(e).catch(function (err) { self.postMessage({ type: 'error', message: err.message,seq:e.data.runSeq }); });
     };
   }
+  /* JavaScript 多线程的子 Worker：同一次计算（run 号相同）只建一次光学系统和瞄准表（约 30 ms），
+     之后每条消息追一格（物距 × 视场 × 波长），把落点原样传回。spotPrepare / spotTrace 都是输入的纯函数，
+     各线程建出来的东西和调度线程里的一模一样。 */
+  function spotSubMain() {
+    var cur = null;
+    self.onmessage = function (e) {
+      var m = e.data;
+      try {
+        if (!cur || cur.run !== m.run) {
+          var p = OPT.parsePrescription(m.tx), sys = OPT.buildSystem(p.surfaces, m.opt);
+          if (m.vig) sys.vig = m.vig;
+          cur = { run: m.run, ctx: OPT.spotPrepare(sys, m.o) };
+        }
+        var ctx = cur.ctx, r0 = ctx.nRays, g = OPT.spotTrace(ctx, m.di, m.fi, m.li);
+        ctx.depths[m.di].fields[m.fi].grids[m.li] = null;
+        var xs = g.xs.slice(), ys = g.ys.slice();          // subarray 背后是整块缓冲，拷成刚好大小再转交
+        self.postMessage({ run: m.run, di: m.di, fi: m.fi, li: m.li, xs: xs, ys: ys, n: g.n, nIn: g.nIn, rays: ctx.nRays - r0 },
+                         [xs.buffer, ys.buffer]);
+      } catch (err) { self.postMessage({ run: m.run, error: err.message }); }
+    };
+  }
+  // 留一个线程给页面本身
+  var SPOT_THREADS = Math.max(1, Math.min(15, (navigator.hardwareConcurrency || 4) - 1));
   /* Worker 的源码：单文件版直接取内联 <script> 的文本；静态站用 fetch 把 js/ 里的文件读成文本。
      不用 importScripts —— 它对 MIME 类型是严格的，Python 的 http.server 在 Windows 上把 .js
      当 text/plain 发，Worker 就起不来（主页面的 <script src> 宽松，所以页面本身没事）。
@@ -3318,6 +3399,8 @@
         return r.text();
       });
     })).then(function (parts) {
+      // 子线程只要 glassdb + optics（scripts 的头两个）
+      SPOT.subSrc = parts[0] + '\n' + parts[1] + '\n(' + spotSubMain.toString() + ')();';
       parts.push('(' + spotWorkerMain.toString() + ')();');
       return parts.join('\n');
     });
@@ -3372,10 +3455,12 @@
     $('spotProg').hidden = false; $('spotProgBar').style.width = '0%'; $('spotProgTxt').textContent = $('spotBadge').textContent;
     var run = ++SPOT.seq;
     var msg = { cmd: 'run', backend: $('spotBackend').value, tx: st.tx, opt: last.opt, vig: last.sys.vig || null, targetUm: um, fields: SPOT.meta.fields,
-                runSeq:run,lamIdx: lamIdx, R: R, px: px, colors: SPOT.meta.colors, weights: SPOT.meta.weights };
-    if(SPOT.worker){SPOT.worker.postMessage(msg);return;}
+                runSeq:run,lamIdx: lamIdx, R: R, px: px, colors: SPOT.meta.colors, weights: SPOT.meta.weights, threads: SPOT_THREADS };
+    // 子线程源码在取 Worker 源码时才备好，发送时再挂上
+    if(SPOT.worker){msg.subSrc=SPOT.subSrc;SPOT.worker.postMessage(msg);return;}
     spotEnsureWorker(msg.backend).then(function (w) {
       if (run !== SPOT.seq) return;
+      msg.subSrc = SPOT.subSrc;
       w.postMessage(msg);
     }).catch(function (err) {
       if (run !== SPOT.seq) return;
@@ -3432,6 +3517,7 @@
      白烧几分钟 CPU。所以默认用 JavaScript，选了 WebGPU 才开始编译；浏览器没有 WebGPU 时这一项直接禁用。 */
   (function () {
     var sel = $('spotBackend'), o = sel.querySelector('option[value="gpu"]');
+    sel.querySelector('option[value="js"]').textContent = 'JavaScript（双精度 · ' + (SPOT_THREADS > 1 ? SPOT_THREADS + ' 线程' : '单线程') + '）';
     if (!navigator.gpu) {
       o.disabled = true; o.textContent = 'WebGPU（此浏览器不支持）';
       if (sel.value === 'gpu') sel.value = 'js';
