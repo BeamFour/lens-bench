@@ -41,10 +41,19 @@ var SPOTGPU = (function () {
         .replace('fn surfaceOffset(i:u32)->u32{return offsets[i+select(0u,taskOffsetsStart,taskConfigurationEnabled)];}', 'fn surfaceOffset(i:u32)->u32{return offsets[i];}');
       const uniformShader = device.createShaderModule({ label: 'Spot immutable aiming', code: uniformCode });
       // Every compute/render pipeline is compiled here, including display.
-      // The page calls create while idle, before the first Generate action.
-      post = await SPOTPOST.create(device, shader);
-      preparation = await SPOTPREP.create(opt, { device, shader });
-      tasks = await SPOTTASK.create(opt, { device, shader, uniformShader, post });
+      // The page warms these pipelines when the GPU backend is selected.
+      // The depth-search kernels and the bounded aiming kernel are independent,
+      // so their pipeline compilations start together and the backend's worker
+      // pool overlaps them; the task backend only needs the statistics object.
+      const postReady = SPOTPOST.create(device, shader);
+      const settled = await Promise.allSettled([
+        postReady,
+        SPOTPREP.create(opt, { device, shader }),
+        postReady.then(ready => SPOTTASK.create(opt, { device, shader, uniformShader, post: ready }))
+      ]);
+      [post, preparation, tasks] = settled.map(result => result.status === 'fulfilled' ? result.value : undefined);
+      const failure = settled.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
       cache = SPOTCACHE.create(opt, preparation);
       assertAvailable();
       async function readStats(ctx, di) {

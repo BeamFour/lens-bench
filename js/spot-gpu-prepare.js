@@ -33,8 +33,7 @@ var SPOTPREP = (function () {
       'prepareStop','prepareChief','prepareChiefSeeds','prepareChiefFinish',
       'prepareAimNodes','prepareExpandAxis','prepareFitTable',
       'prepareAxialSamples','prepareBlurReduceParallel',
-      'prepareDepthSearchGeometry','collectDepthBlur','depthCoarseSchedule',
-      'depthSearchBracket','depthSearchNext','depthSearchUpdate','depthSearchFinish'
+      'depthControlStage'
     ];
     var pipelines={};
     await Promise.all(names.map(async function(name){
@@ -164,21 +163,32 @@ var SPOTPREP = (function () {
         if(error)throw new Error('GPU depth search validation: '+error.message);
       }
     }
-    function depthControl(depth,record,validation){
-      var key=record+'|'+validation;if(depth.controls.has(key))return depth.controls.get(key);
-      var data=new Uint32Array([record,depth.backStart,depth.backCount,depth.frontStart,depth.frontCount,0,validation?1:0,0]);
+    function depthControl(depth,record,validation,stage){
+      var key=record+'|'+validation+'|'+stage;if(depth.controls.has(key))return depth.controls.get(key);
+      var data=new Uint32Array([record,depth.backStart,depth.backCount,depth.frontStart,depth.frontCount,stage,validation?1:0,0]);
       var b=makeBuffer(depth.owned,'depth-search-control',32,usage.UNIFORM|usage.COPY_DST,data);
       depth.controls.set(key,b);return b;
     }
     function depthOp(list,depth,name,job,record,validation){
-      var layouts={
-        prepareDepthSearchGeometry:[[5],[],[15,16,17,18,19]],collectDepthBlur:[[],[1],[15,16]],
-        depthCoarseSchedule:[[],[],[15,16,19]],depthSearchBracket:[[],[],[15,16]],
-        depthSearchNext:[[],[],[15]],depthSearchUpdate:[[],[],[15]],depthSearchFinish:[[],[],[15]]
-      };
-      var pipeline=pipelines[name],ctl=depthControl(depth,record||0,validation);
-      var resources={5:job&&job.gen,1:job&&job.meta,15:depth.buffer,16:ctl,17:depth.constants,18:job&&job.depthGen,19:job&&job.depthIndirect};
-      var groups=layouts[name].map(function(bindings,index){
+      var stages=['prepareDepthSearchGeometry','collectDepthBlur','depthCoarseSchedule',
+        'depthSearchBracket','depthSearchNext','depthSearchUpdate','depthSearchFinish'];
+      var stage=stages.indexOf(name);if(stage<0)throw new Error('Unknown depth control stage');
+      if(!depth.fallback){
+        depth.fallback={
+          gen:makeBuffer(depth.owned,'depth-control-unused-gen',128,usage.UNIFORM),
+          meta:makeBuffer(depth.owned,'depth-control-unused-meta',128,usage.STORAGE),
+          geometry:makeBuffer(depth.owned,'depth-control-unused-geometry',128,usage.STORAGE),
+          dispatch:makeBuffer(depth.owned,'depth-control-unused-dispatch',80,usage.STORAGE)
+        };
+      }
+      var pipeline=pipelines.depthControlStage,ctl=depthControl(depth,record||0,validation,stage);
+      var resources={5:job&&job.gen||depth.fallback.gen,1:job&&job.meta||depth.fallback.meta,
+        15:depth.buffer,16:ctl,17:depth.constants,18:job&&job.depthGen||depth.fallback.geometry,
+        // A buffer cannot be both writable storage and indirect dispatch input
+        // in one pass. Stage 1 never accesses dispatch storage, so bind a dummy.
+        19:name!=='collectDepthBlur'&&job&&job.depthIndirect||depth.fallback.dispatch};
+      var bindingsByGroup=[[5],[1],[15,16,17,18,19]];
+      var groups=bindingsByGroup.map(function(bindings,index){
         return device.createBindGroup({layout:pipeline.getBindGroupLayout(index),entries:bindings.map(function(binding){
           return{binding:binding,resource:{buffer:resources[binding]}};
         })});
