@@ -29,8 +29,8 @@ var SPOTTASK = (function () {
     const U = GPUBufferUsage;
     const pipelines = {};
     const entries = [
-      'generateOpticalTasks', 'prepareUniformTaskSliceDispatch',
-      'aimOpticalUniformQueue', 'traceOpticalTasks'
+      'generateTraceOpticalTasks', 'prepareUniformTaskSliceDispatch',
+      'aimOpticalUniformQueue'
     ];
     await Promise.all(entries.map(async entry => {
       pipelines[entry] = await device.createComputePipelineAsync({
@@ -297,15 +297,29 @@ var SPOTTASK = (function () {
             device.queue.submit([encoder.finish()]);
             encoder = device.createCommandEncoder({label: 'Spot bounded optical work'});
           }
-          let pipeline = pipelines.generateOpticalTasks;
-          let pass = encoder.beginComputePass({label: 'Spot task generation'});
-          pass.setPipeline(pipeline);
-          pass.setBindGroup(0, group(pipeline, 0, [
-            [4, dummyConfig], [5, dummyGeneration], [6, nodeBuffer], [7, cache]
-          ]));
-          pass.setBindGroup(1, group(pipeline, 1, [[4, data, count * TASK_BYTES], [5, jobs]]));
-          pass.dispatchWorkgroups(Math.ceil(cap / 64), count);
-          pass.end();
+          const chunk = Math.max(256, Math.floor(traceChunk / count / 256) * 256);
+          let pipeline, pass;
+          function traceInterval(mode, begin, length) {
+            const interval = taskData.slice(0), integers = new Uint32Array(interval);
+            for (let ti = 0; ti < count; ti++) integers[ti * TASK_WORDS + 5] = begin;
+            const descriptor = buffer('trace-descriptor-shared', interval.byteLength,
+              U.STORAGE | U.COPY_DST, interval);
+            const control = buffer('trace-control-shared', 16, U.UNIFORM | U.COPY_DST,
+              new Uint32Array([mode, length, 0, 0]));
+            pipeline = pipelines.generateTraceOpticalTasks;
+            pass = encoder.beginComputePass({label: mode ? 'Spot queued final trace' : 'Spot sample and table trace'});
+            pass.setPipeline(pipeline);
+            pass.setBindGroup(0, group(pipeline, 0, [
+              [0, offsetBuffer], [1, surfaceBuffer], [3, output], [4, dummyConfig],
+              [5, dummyGeneration], [6, nodeBuffer], [7, cache]
+            ]));
+            pass.setBindGroup(1, group(pipeline, 1, [[4, descriptor, count * TASK_BYTES], [5, jobs], [11, control]]));
+            pass.dispatchWorkgroups(Math.ceil(length / 64), count);
+            pass.end();
+            // Submit before overwriting shared descriptor/control uniforms.
+            flush();
+          }
+          for (let begin = 0; begin < cap; begin += chunk) traceInterval(0, begin, Math.min(chunk, cap - begin));
           if (hasAiming) {
             const schedule = buffer('queue-schedule-shared', 16, U.UNIFORM | U.COPY_DST,
               new Uint32Array([count, queueSlices, queueChunk, 0]));
@@ -359,22 +373,8 @@ var SPOTTASK = (function () {
           }
           flush();
 
-          const chunk = Math.max(256, Math.floor(traceChunk / count / 256) * 256);
-          for (let begin = 0; begin < cap; begin += chunk) {
-            const length = Math.min(chunk, cap - begin), interval = taskData.slice(0);
-            const integers = new Uint32Array(interval);
-            for (let ti = 0; ti < count; ti++) integers[ti * TASK_WORDS + 5] = begin;
-            const descriptor = buffer('trace-descriptor-shared', interval.byteLength, U.STORAGE | U.COPY_DST, interval);
-            pipeline = pipelines.traceOpticalTasks;
-            pass = encoder.beginComputePass({label: 'Spot bounded final trace'});
-            pass.setPipeline(pipeline);
-            pass.setBindGroup(0, group(pipeline, 0, [
-              [0, offsetBuffer], [1, surfaceBuffer], [3, output], [4, dummyConfig], [7, cache]
-            ]));
-            pass.setBindGroup(1, group(pipeline, 1, [[4, descriptor, count * TASK_BYTES]]));
-            pass.dispatchWorkgroups(Math.ceil(length / 64), count);
-            pass.end();
-            flush();
+          if (hasAiming) {
+            for (let begin = 0; begin < cap; begin += chunk) traceInterval(1, begin, Math.min(chunk, cap - begin));
           }
           selected.forEach((task, ti) => {
             const cfg = new Uint32Array(8);
