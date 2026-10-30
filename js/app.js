@@ -27,7 +27,7 @@
     if (!e || !e.origin) { el.hidden = true; el.textContent = ''; el.className = 'badge'; return; }
     el.hidden = false;
     el.textContent = e.origin;
-    el.className = 'badge ' + (e.origin === '专利' ? 'pat' : 'rev');
+    el.className = 'badge ' + (e.origin === '专利' ? 'pat' : e.origin === '原型' ? 'proto' : 'rev');
     el.title = e.originNote || e.origin;
   }
   function brandList() {
@@ -3163,7 +3163,7 @@
       var b = brandOf(e);
       if (!by[b]) { by[b] = { n: 0, pat: 0, rev: 0 }; order.push(b); }
       by[b].n++; tot++;
-      if (e.origin === '专利') { by[b].pat++; pat++; }
+      if (e.origin === '专利' || e.origin === '原型') { by[b].pat++; pat++; }   // 原型（未量产的专利实施例）算进专利
       else if (e.origin === '逆向') { by[b].rev++; rev++; }
     });
     $('abTotal').textContent = tot;
